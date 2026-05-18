@@ -2425,26 +2425,189 @@ Test categories:
 - **End-to-end via `@alchemy/convex-dsl/test`**: `TestConvex.layer(app, ...)` tests all server logic.
 - **Worker fixture tests**: per AGENTS.md convention — deploy a Worker bound to a Convex deployment and drive it over HTTP.
 
-## 17. Documentation strategy
+## 17. Documentation and productization strategy
 
-JSDoc-driven per Alchemy convention. Hand-written guides:
+This feature is too broad to treat docs as a final polish task. The docs are the product contract. Before implementation starts, write the detailed docs as if the APIs already exist, then use those docs to constrain coding. If the implementation discovers a better API, update the docs in the same commit that changes the code.
 
-- `concepts/convex-flavors.mdx` — the 4-flavor decision tree (default: Flavor 2)
-- `guides/convex-quickstart.mdx` — Flavor 1 setup
-- `guides/convex-app-quickstart.mdx` — Flavor 2 setup
-- `guides/convex-runtime-experimental.mdx` — Flavor 3 setup with warnings about experimental status
-- `guides/migrating-from-confect.mdx` — Confect → DSL
-- `guides/convex-typed-errors.mdx` — schema-typed errors round-tripping through clients
-- `guides/convex-query-cache-clock.mdx` — `Date.now()` footgun + Clock service
-- `guides/convex-components.mdx` — all `@convex-dev/*` components via the generic installer
-- `guides/convex-self-host.mdx` — self-host deployment
-- `guides/convex-testing.mdx` — `@alchemy/convex-dsl/test` patterns
+Documentation is JSDoc-driven for generated API reference per Alchemy convention, but the Convex integration needs substantial hand-written guides, recipes, and operational playbooks.
 
-`llms.txt` gets one line per resource (auto-deployed by docs pipeline).
+### 17.1 Golden path narrative
+
+The docs lead with one end-to-end story that demonstrates why Alchemy + Convex is more than "Convex deploy wrapped in another CLI":
+
+1. Create or select a Convex project.
+2. Choose Flavor 2 (`@alchemy/convex-dsl` + `@alchemy/convex-files`) as the recommended default.
+3. Define schema, queries, mutations, and an HTTP route in the Alchemy DSL.
+4. Add Better Auth with generated HTTP routes and secret env vars.
+5. Add Cloudflare R2 through `Cloudflare.R2Bucket` + `Components.R2`.
+6. Add an online migration with expand/backfill/contract metadata.
+7. Add one operational component (`RateLimiter` or `Workflow`) so users see typed component clients.
+8. Run `alchemy plan` and inspect codegen, secrets, component installs, and migration phase output.
+9. Run `alchemy deploy`.
+10. Run or wait for migrations, verify status, then show the contract gate.
+
+This golden path gets a full guide and a runnable example. All other docs point back to it instead of re-explaining the whole system.
+
+### 17.2 Documentation information architecture
+
+Hand-written docs:
+
+| Doc | Purpose |
+|---|---|
+| `concepts/convex-overview.mdx` | What Alchemy owns, what Convex owns, and why the integration exists. |
+| `concepts/convex-flavors.mdx` | The 4-flavor decision tree. Default: Flavor 2. |
+| `concepts/convex-generated-files.mdx` | Generated-file ownership contract and drift behavior. |
+| `concepts/convex-components.mdx` | Generic component substrate, promoted wrappers, maturity tiers, and component env/http rules. |
+| `concepts/convex-security-model.mdx` | Tokens, deploy keys, Convex env vars, generated HTTP routes, and secret redaction. |
+| `guides/convex-quickstart.mdx` | Flavor 1: existing Convex app, Alchemy manages infra. |
+| `guides/convex-app-quickstart.mdx` | Flavor 2 golden path. This is the recommended start page. |
+| `guides/convex-runtime-experimental.mdx` | Flavor 3 runtime push, with experimental warning and byte-equivalence caveats. |
+| `guides/migrating-from-confect.mdx` | Confect -> DSL migration. |
+| `guides/convex-migrations.mdx` | Expand/backfill/contract workflow using `defineMigrations`. |
+| `guides/convex-auth.mdx` | Tier 1 JWT providers, Convex Auth, and Better Auth. |
+| `guides/convex-components-promoted.mdx` | Per-promoted-wrapper usage and examples. |
+| `guides/convex-r2.mdx` | R2 bucket + Convex metadata integration. |
+| `guides/convex-workflows-and-jobs.mdx` | Workflow, Workpool, Action Retrier, Action Cache. |
+| `guides/convex-typed-errors.mdx` | Schema-typed errors round-tripping through clients. |
+| `guides/convex-query-cache-clock.mdx` | `Date.now()` footgun + Clock service. |
+| `guides/convex-self-host.mdx` | Self-host deployment. |
+| `guides/convex-testing.mdx` | `@alchemy/convex-dsl/test`, component registration, and generated service Layers. |
+| `guides/convex-production-checklist.mdx` | Deploy keys, secrets, custom domains, backups, logs, migration gates, and rollback notes. |
+| `recipes/convex-zero-downtime-rename.mdx` | Rename a field with dual-write + backfill + contract. |
+| `recipes/convex-rotate-secret.mdx` | Rotate Convex env vars and generated app secrets. |
+| `recipes/convex-recover-failed-migration.mdx` | Inspect, resume, cancel, or retire failed migrations. |
+| `recipes/convex-mux-video-catalog.mdx` | Mux component, webhook route, and backfill. |
+| `recipes/convex-better-auth-cloudflare.mdx` | Better Auth with Cloudflare-hosted frontend. |
+| `recipes/convex-dynamic-tenant-crons.mdx` | Runtime cron registration with `@convex-dev/crons`. |
+
+`llms.txt` gets one line per resource, one line per promoted component, and one line per guide. The generated API reference is still produced from JSDoc in source files; do not hand-edit generated provider docs.
+
+### 17.3 Generated-file ownership contract
+
+The docs must make file ownership boringly explicit:
+
+| Path | Owner | Drift behavior |
+|---|---|---|
+| `alchemy.run.ts` / stack entrypoint | User | Never generated or overwritten. |
+| `convex/schema.ts` in Flavor 1 | User | Alchemy reads only. |
+| `convex/*.ts` in Flavor 1 | User | Alchemy reads only except explicitly requested component scaffolds. |
+| `convex/_alchemy/**` | Alchemy | Overwrite on codegen; warn on manual edits. Optional `strictDrift` fails. |
+| `convex/convex.config.ts` in Flavor 2 | Merge-managed | Alchemy owns generated component imports/`app.use`; user-owned regions are preserved. |
+| `convex/http.ts` | Merge-managed | Alchemy registers generated route helpers; never replaces existing router wholesale. |
+| `convex/auth.ts`, `convex/auth.config.ts` | Merge-managed or user-owned by mode | Better Auth and Convex Auth docs explain ownership mode at creation. |
+| `convex/migrations.ts` | User-facing re-export | Flavor 2 writes `convex/_alchemy/migrations.ts`; top-level file is a stable re-export. |
+| `convex/_generated/**` | Convex CLI | Alchemy never writes; it may require codegen/checks. |
+| `node_modules/**` | Package manager | Alchemy does not patch installed packages. |
+| `.env.local` | User | Alchemy may read for local dev only if explicitly configured; production env goes through resources. |
+
+`alchemy codegen --check` validates generated files in CI. It prints exact drift and never silently rewrites during check mode.
+
+### 17.4 Plan output UX
+
+The plan output is a core UX surface. It should read like an operational checklist, not a Terraform wall. Example:
+
+```txt
+Convex App Backend (prod)
+
+Codegen
+  + write convex/_alchemy/schema.ts
+  + merge convex/convex.config.ts
+  + merge convex/http.ts
+  + write convex/_alchemy/migrations.ts
+
+Components
+  + install @convex-dev/migrations as components.migrations
+  + install @convex-dev/better-auth as components.betterAuth
+  + install @convex-dev/r2 as components.r2
+  + install @convex-dev/rate-limiter as components.rateLimiter
+
+Secrets
+  + set BETTER_AUTH_SECRET      (redacted, create)
+  + set SITE_URL                https://app.example.com
+  + set CONVEX_SITE_URL         https://acme-prod.convex.site
+  + set R2_ACCESS_KEY_ID        (redacted, update)
+  + set R2_SECRET_ACCESS_KEY    (redacted, no change)
+
+HTTP
+  + /api/auth/*                 generated Better Auth routes
+  + /mux/webhook                generated Mux webhook route
+
+Migrations
+  expand   20260519_user_display_name       ready
+  backfill 20260519_user_display_name       pending, run=wait, dry-run-first
+  contract 20260519_user_display_name       blocked until verify is clean
+
+Post-deploy commands
+  convex run migrations:runPending '{}'
+  convex run migrations:verifyUserDisplayName '{}'
+```
+
+Rules:
+
+- Plan output groups by user concern: codegen, components, secrets, HTTP, migrations, deploy, post-deploy.
+- Secret values are never printed; redacted outputs include action (`create`, `update`, `delete`, `no change`).
+- Unsafe operations explain their gate in one line: "contract blocked until verify is clean", not a generic failure.
+- Component version drift is explicit: "wrapper tested against 0.3.2, installed 0.3.3".
+- For Mux, Authz cleanup, dynamic crons, and migrations, plan output prints the exact post-deploy command if Alchemy is not running it automatically.
+
+### 17.5 Component maturity tiers
+
+Component support is tiered so the initial release can be excellent without pretending every package has the same support level:
+
+| Tier | Meaning | Components |
+|---|---|---|
+| A — flagship | Detailed guide, generated code, test helper integration, Effect service, example app coverage. | Migrations, Better Auth, R2, RateLimiter, Workflow, Workpool. |
+| B — typed client | Generic install + Effect service + tests, but no full example app by default. | Aggregate, ShardedCounter, Geospatial, Crons, ActionCache, ActionRetrier, Agent, Authz. |
+| C — integration bridge | Needs external service/webhook/scaffold; docs are explicit about app-owned code and secrets. | Mux, NeutralCost. |
+| D — generic | Works through `Convex.Component` only. | Any component not promoted yet. |
+
+Tier A is required for the first public release. Tier B/C can land incrementally, but the generic substrate must support all of them from day one.
+
+### 17.6 Operational playbooks
+
+The docs include playbooks for the failure modes users will actually hit:
+
+- **Zero-downtime field rename**: deploy expand schema, dual-write, run backfill, verify, contract.
+- **Failed migration**: inspect component status, fix code, resume, cancel, retire, or create replacement migration.
+- **Blocked contract**: read verification output, print sample failing documents, keep old readers/writers.
+- **Secret rotation**: set new env var, deploy code that accepts both, rotate provider secret, remove old var.
+- **Better Auth production setup**: `SITE_URL`, `CONVEX_SITE_URL`, route base path, OAuth callback URLs, JWKS, cookie domain.
+- **R2 upload recovery**: metadata exists but object missing, object exists but metadata missing, signed URL expiry.
+- **Mux backfill/webhook recovery**: rerun backfill, replay webhook fixture, verify event table, repair route.
+- **Authz role change**: update role definition, deploy, run rematerialization, verify audit entries.
+- **Dynamic cron cleanup**: find orphaned crons, delete by name/id, re-run init.
+- **Self-host swap**: replace cloud credentials with self-host URL/admin key and verify unsupported resources are skipped.
+
+Each playbook includes exact `alchemy` and `convex` commands, expected output shape, and "when to stop and ask a human" notes.
+
+### 17.7 Security and privacy model
+
+Security docs are not optional because this integration generates auth routes, stores deployment credentials, and manages production env vars:
+
+- Dashboard/team tokens and deploy keys are deploy-time credentials only. They never enter generated Convex runtime code.
+- `Binding.Policy` services are plantime-only; runtime bundles get `Binding.Service` layers without management credentials.
+- Convex env vars are resources with redacted state for secrets. Plain values (`SITE_URL`, bucket names) are distinguishable from secrets.
+- Component env is declared through typed `defineApp({ env })` when the component supports it; raw env reads are documented as upstream caveats.
+- Generated public HTTP routes are opt-in unless a high-level auth/integration resource explicitly owns them.
+- Generated upload URLs, Mux webhooks, auth callbacks, and dynamic crons include default auth/verification guidance.
+- Generated code avoids logging request headers, auth tokens, secret env vars, migration document bodies, and provider SDK responses unless explicitly redacted.
+- Example apps include `.env.example` with names only, never values.
+
+### 17.8 Compatibility and drift contract
+
+Convex and component packages move quickly. The docs promise a narrow, testable compatibility contract:
+
+- Public Alchemy wrappers pin tested upstream major/minor ranges.
+- The generic `Convex.Component` substrate is the escape hatch when a promoted wrapper lags upstream.
+- Weekly CI tests latest compatible `convex`, selected `@convex-dev/*` components, and `effect` catalog range.
+- Flavor 3 additionally runs byte-equivalence against the Convex CLI dry-run payload.
+- Docs state when npm latest and GitHub `main` disagree; package metadata wins for install instructions.
+- Generated code includes a short version comment for promoted wrappers so bug reports can identify the wrapper/component pair.
+- Breaking upstream drift produces a specific `ConvexComponentVersionDrift` or `ConvexDeployProtocolDrift` error, not a generic bundler failure.
 
 ## 18. Example apps
 
-Four examples, each self-contained, one per flavor:
+Five examples, each self-contained:
 
 **18.1 `examples/cloudflare-convex-plain/`** — Flavor 1. Existing Convex setup, Alchemy manages infra. Convex Auth + Cloudflare Worker.
 
@@ -2456,7 +2619,9 @@ Four examples, each self-contained, one per flavor:
 
 **18.5 `examples/astro-convex-cloudflare/`** — Flavor 2 + Astro SSR.
 
-Each example demonstrates cloud deploy, dev mode, and (where applicable) self-host swap.
+Each example demonstrates cloud deploy, dev mode, generated-file checks, and (where applicable) self-host swap.
+
+The main golden-path example is `examples/cloudflare-convex-dsl/`. It should include schema, typed functions, HTTP route, Better Auth variant notes, R2 upload metadata, RateLimiter, and one online migration. Other examples stay smaller and focused.
 
 ## 19. Latest framework versions
 
@@ -2471,10 +2636,24 @@ Examples pin to latest stable releases at write time:
 
 Lock files committed. CI runs against pinned versions.
 
-## 20. Delivery — single PR, 5 packages, 14 commit milestones
+## 20. Delivery — docs first, then single implementation PR
+
+Before coding the packages, write the detailed docs listed in §17 as a docs-first product contract. That docs pass can be a standalone PR or the first commit in the implementation branch, but it must be reviewed before resource/provider implementation begins.
+
+Docs-first acceptance criteria:
+
+- The golden path guide is complete enough that an engineer can implement the APIs from it.
+- The generated-file ownership table is complete.
+- The plan-output examples cover components, secrets, HTTP routes, migrations, and drift.
+- The component maturity tiers are explicit.
+- The production checklist and at least three operational playbooks are drafted.
+- Every hand-written guide has its target package/API names, even if code blocks are marked "planned API".
+
+After docs approval, implement in one PR with 5 packages and 15 reviewable commit milestones.
 
 Branch: `feat/convex`. PR into `alchemy-run/alchemy-effect:main`. Each milestone = one reviewable commit:
 
+0. **Docs-first product contract** — §17 guides/playbooks/plan-output examples drafted with planned API code blocks.
 1. **SDK + auth + cloud control plane** — `Sdk/*`, `AuthProvider`, `Credentials`, `Errors`, `Team`, `Project`, `Deployment`, `DeployKey`, `CustomDomain`, `ProjectEnvVar`.
 2. **Per-deployment admin plane** — `EnvironmentVariable`, `CanonicalUrl`, `LogStream`, `DeploymentState`, `SnapshotExport`, `SnapshotImport`.
 3. **Dashboard plane** — `PeriodicBackup`, `ManualBackup`, `SSO`, `OAuthApp`, `TeamInvite`, `TeamMember`.
@@ -2488,7 +2667,7 @@ Branch: `feat/convex`. PR into `alchemy-run/alchemy-effect:main`. Each milestone
 11. **`convex-runtime` bundler** — `VirtualFsPlugin`, `AppBundler`, `EsbuildConfig`, `ExternalDeps`, `SchemaBundler`.
 12. **`convex-runtime` resources + dev mode** — `AppBundle`, `AppDeploy`, `RuntimeDeployer`, `Dev/Watcher`, `Dev/DevRuntime`, `Vite/Plugin`.
 13. **`@alchemy/convex-confect`** — `ConfectDeployer`, `fromConfect` adapter.
-14. **Docs + examples + byte-equivalence test** — guides, 5 examples, byte-equivalence fixture, llms.txt.
+14. **Examples + byte-equivalence test** — 5 examples, byte-equivalence fixture, llms.txt.
 
 Each commit independently passes type checking and tests.
 
