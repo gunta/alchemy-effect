@@ -1,7 +1,7 @@
 /**
- * Generates `public/llms.txt` — a navigation index of every docs page,
- * grouped by section, with title + description pulled from each page's
- * frontmatter.
+ * Generates `public/llms.txt` — a navigation index of every non-provider
+ * docs page, grouped by section, with title + description pulled from each
+ * page's frontmatter.
  *
  * Run with: `bun scripts/generate-llms-txt.ts`
  *
@@ -35,11 +35,11 @@ interface Section {
   /** Optional prose paragraph after the heading. */
   intro?: string;
   /**
-   * Pages to include. Either a list of explicit slugs (relative to docs dir,
-   * no extension) in the desired order, or a directory to enumerate
-   * alphabetically.
+   * Pages to include. A section may provide explicit slugs first, then append
+   * every page in a directory alphabetically. Duplicate slugs are removed while
+   * preserving the first occurrence.
    */
-  pages: { slugs: string[] } | { directory: string; exclude?: string[] };
+  pages: { slugs?: string[]; directory?: string; exclude?: string[] };
 }
 
 const SECTIONS: Section[] = [
@@ -93,6 +93,12 @@ const SECTIONS: Section[] = [
     },
   },
   {
+    heading: "Convex — planned integration",
+    intro:
+      "Product-contract docs for the planned Convex integration: concepts, authoring modes, component wrappers, migrations, auth, storage, jobs, testing, and operational recipes.",
+    pages: { directory: "convex" },
+  },
+  {
     heading: "Concepts — the mental model",
     intro:
       "Reference pages explaining what each primitive means and how they fit together. Read these when something in a tutorial feels magical, or before designing a new Stack.",
@@ -114,6 +120,7 @@ const SECTIONS: Section[] = [
         "concepts/observability",
         "concepts/testing",
       ],
+      directory: "concepts",
     },
   },
   {
@@ -142,7 +149,7 @@ const HEADER = `# Alchemy
 
 > Alchemy Effect is an Infrastructure-as-Effects (IaE) framework that combines cloud infrastructure and application logic into a single, type-safe program powered by [Effect](https://effect.website). Resources are declared as Effects; bindings wire IAM, env vars, and typed SDKs in one call; deploys and runtime share the same code.
 
-This file is a navigation index for the documentation site at ${siteUrl}. Every page under \`/src/content/docs/\` is listed below with its URL and a one-line summary, so an agent can pick the right page in one hop.`;
+This file is a navigation index for the documentation site at ${siteUrl}. Every non-provider page under \`/src/content/docs/\` is listed below with its URL and a one-line summary, so an agent can pick the right page in one hop. Provider API reference pages are generated separately and summarized at the end.`;
 
 function parseFrontmatter(source: string): Record<string, string> {
   if (!source.startsWith("---")) return {};
@@ -179,7 +186,7 @@ async function loadPage(slug: string): Promise<Page> {
         throw new Error(`Missing title in frontmatter: ${rel}`);
       }
       return {
-        href: `/${slug}`,
+        href: `/${slug.replace(/\/index$/, "")}`,
         slug,
         title,
         description,
@@ -200,32 +207,59 @@ async function listSlugs(
   const entries = await readdir(dir, { withFileTypes: true });
   const slugs: string[] = [];
   for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const ext = path.extname(entry.name);
-    if (ext !== ".md" && ext !== ".mdx") continue;
-    const slug = `${directory}/${entry.name.slice(0, -ext.length)}`;
-    if (exclude.includes(slug)) continue;
-    slugs.push(slug);
+    const entryPath = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) {
+      slugs.push(...(await listSlugs(entryPath, exclude)));
+      continue;
+    }
+    if (entry.isFile()) {
+      const ext = path.extname(entry.name);
+      if (ext !== ".md" && ext !== ".mdx") continue;
+      const slug = `${directory}/${entry.name.slice(0, -ext.length)}`;
+      if (exclude.includes(slug)) continue;
+      slugs.push(slug);
+    }
   }
-  slugs.sort();
+  slugs.sort((a, b) => {
+    if (a.endsWith("/index") && !b.endsWith("/index")) return -1;
+    if (!a.endsWith("/index") && b.endsWith("/index")) return 1;
+    return a.localeCompare(b);
+  });
   return slugs;
 }
 
 function renderPage(page: Page): string {
   const url = `${siteUrl}${page.href}`;
-  const desc = page.description ? ` — ${page.description}` : "";
+  const description = plannedConvexPage(page.slug)
+    ? `Planned Convex API contract: ${page.description}`
+    : page.description;
+  const desc = description ? ` — ${description}` : "";
   return `- [${page.title}](${url})${desc}`;
+}
+
+function plannedConvexPage(slug: string): boolean {
+  return (
+    slug === "convex/index" ||
+    slug.startsWith("convex/concepts/") ||
+    slug.startsWith("convex/guides/") ||
+    slug.startsWith("convex/recipes/")
+  );
 }
 
 async function main() {
   const parts: string[] = [HEADER];
 
   for (const section of SECTIONS) {
-    const slugs =
-      "slugs" in section.pages
-        ? section.pages.slugs
-        : await listSlugs(section.pages.directory, section.pages.exclude);
-    const pages = (await Promise.all(slugs.map(loadPage))).filter(
+    const slugs = new Set(section.pages.slugs ?? []);
+    if (section.pages.directory) {
+      for (const slug of await listSlugs(
+        section.pages.directory,
+        section.pages.exclude,
+      )) {
+        slugs.add(slug);
+      }
+    }
+    const pages = (await Promise.all(Array.from(slugs).map(loadPage))).filter(
       (p) => !p.draft,
     );
 

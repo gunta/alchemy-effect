@@ -1,0 +1,208 @@
+---
+title: Zero-downtime Convex Field Rename
+description: Rename a Convex field with expand, dual-write, backfill, verify, and contract.
+sidebar:
+  order: 10
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Use this recipe when a document field needs a real production rename, not a
+big-bang rewrite. The safe shape is always the same:
+
+1. expand the schema,
+2. deploy code that tolerates both shapes,
+3. backfill existing documents online,
+4. verify that no old-shape documents remain,
+5. contract only after verification is clean.
+
+For the underlying migration model, see
+[`/convex/guides/migrations`](/convex/guides/migrations).
+
+## Before you start
+
+This playbook assumes:
+
+- you are using the planned `defineMigrations` wrapper,
+- the rename can be expressed as dual-write plus backfill,
+- you are willing to keep the old field alive until verify is clean.
+
+Do not use this playbook for destructive transforms that need a human review
+per document.
+
+## Step 1: Expand the schema and declare the migration
+
+Make the new field optional first. Then declare an online migration that
+records the expand, verify, and contract intent in source control.
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { defineApp, defineMigrations } from "@alchemy/convex-dsl";
+
+const migrations = defineMigrations((m) => [
+  m.online("20260519_user_display_name", {
+    strategy: "dual-write",
+    table: schema.tables.users,
+    batchSize: 100,
+    schedule: { maxParallelBatches: 1 },
+    expand: {
+      summary: "displayName is optional; writers fill both name and displayName",
+      requires: [
+        m.schemaField("users", "displayName").optional(Schema.String),
+        m.writer("users").writes(["name", "displayName"]),
+        m.reader("users").reads("name"),
+      ],
+    },
+    migrateOne: (user) =>
+      Effect.gen(function* () {
+        if (user.displayName !== undefined) return {};
+        return { displayName: user.name };
+      }),
+    verify: {
+      remaining: (q) => q.filter((q) => q.eq(q.field("displayName"), undefined)),
+      sample: 20,
+    },
+    contract: {
+      summary: "all readers and writers use displayName only",
+      after: "completed",
+      requires: [
+        m.reader("users").reads("displayName"),
+        m.writer("users").writes(["displayName"]),
+        m.noRemaining("users", "displayName"),
+      ],
+    },
+  }),
+]);
+
+export default defineApp({ schema, groups, migrations });
+```
+
+The important part is not the rename itself. It is that `expand`,
+`migrateOne`, `verify`, and `contract` are all declared together.
+
+## Step 2: Plan the rollout
+
+Run a plan before the first deploy:
+
+```sh
+alchemy plan
+```
+
+Expected migration section:
+
+```txt
+Migrations
+  expand   20260519_user_display_name       ready
+  backfill 20260519_user_display_name       pending, run=wait, dry-run-first
+  contract 20260519_user_display_name       blocked until verify is clean
+```
+
+That blocked contract line is correct. A blocked contract means Alchemy has
+enough rollout metadata to stop you from tightening the schema too early.
+
+## Step 3: Deploy the expand step
+
+Deploy the app with either:
+
+- `phase: "expand"` if you want a dedicated expand-only deploy, or
+- `phase: "backfill"` if you are ready to ship expand plus backfill control
+  together.
+
+Exact deploy command:
+
+```sh
+alchemy deploy
+```
+
+After this deploy, writers should fill both `name` and `displayName`. Readers
+may still fall back to `name`.
+
+## Step 4: Run the online backfill
+
+If the migration config uses `run: "wait"`, `alchemy deploy` starts the
+backfill and waits for completion or timeout.
+
+If the migration config uses manual execution, run the generated migration
+entrypoint directly:
+
+```sh
+convex run migrations:runPending '{}'
+```
+
+Expected result shape:
+
+```txt
+Started pending migrations
+```
+
+The exact human-readable text may vary, but the command should succeed without
+exposing document bodies or secret values.
+
+## Step 5: Verify before you contract
+
+Run the generated verify function:
+
+```sh
+convex run migrations:verifyUserDisplayName '{}'
+```
+
+Expected output shape:
+
+```json
+{
+  "remaining": 0,
+  "sample": []
+}
+```
+
+If `remaining` is non-zero, the migration is not ready for contract. The
+`sample` field is the fast path for debugging what still needs migration.
+
+## Step 6: Contract only after verify is clean
+
+Once:
+
+- all readers use `displayName`,
+- all writers write `displayName`,
+- `verify` returns `remaining: 0`,
+- production contract is explicitly allowed,
+
+switch the deployment posture to contract and deploy again:
+
+```sh
+alchemy plan
+alchemy deploy
+```
+
+Expected plan shape right before the contract deploy:
+
+```txt
+Migrations
+  expand   20260519_user_display_name       complete
+  backfill 20260519_user_display_name       complete
+  contract 20260519_user_display_name       ready
+```
+
+At that point you can remove the old `name` fallback and tighten the schema.
+
+## Common caveats
+
+- Prefer `strategy: "dual-write"` for renames. It is the best rollback posture.
+- Keep `dryRunFirst: true` enabled for production backfills.
+- Do not use `m.patch(...)` for a rename that needs a contract gate.
+- Do not remove the old field from code just because the backfill started.
+- Treat `convex/_alchemy/migrations.ts` as generated. Change the source app,
+  not the generated file.
+
+## When to stop and ask a human
+
+Stop and get an explicit review if any of these are true:
+
+- the new field is not semantically equivalent to the old field,
+- the migration drops information or changes security-sensitive meaning,
+- `verify.sample` includes documents that look malformed, regulated, or
+  customer-specific enough that an automatic rewrite may be risky,
+- the old and new code paths would produce different billing, auth, or access
+  behavior,
+- the contract deploy would remove the last rollback path to old code.

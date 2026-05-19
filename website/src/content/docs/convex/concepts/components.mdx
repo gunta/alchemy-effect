@@ -1,0 +1,216 @@
+---
+title: Convex Components
+description: Use generic Convex component installs and promoted Effect-native component wrappers from Alchemy.
+sidebar:
+  order: 93
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+## Overview
+
+Convex Components are not just packages. Each component can bring its
+own schema, functions, HTTP routes, environment contract, generated API,
+and test helpers. Alchemy models that shape directly.
+
+The planned integration has two layers:
+
+- a generic `Convex.Component` substrate that works for any component,
+- promoted wrappers for the components where Alchemy can add real type
+  safety, better runtime services, or safer operational defaults.
+
+## Generic component install
+
+The generic resource is the universal escape hatch and the foundation
+for promoted wrappers.
+
+```ts
+const component = yield* Convex.Component("geospatial", {
+  source: {
+    package: "@convex-dev/geospatial",
+    version: "^0.2.1",
+    configExport: "@convex-dev/geospatial/convex.config.js",
+  },
+  name: "geospatial",
+  test: "@convex-dev/geospatial/test",
+});
+```
+
+This is planned API surface. The important design contract is that a
+component install is a real deploy-time declaration, not just a string
+added to a config file.
+
+## `ComponentSource`
+
+The generic installer should support the two source forms Convex users
+actually need:
+
+```ts
+type ComponentSource =
+  | {
+      package: string;
+      version?: string;
+      configExport?: string;
+    }
+  | {
+      local: string;
+      configPath?: string;
+    };
+```
+
+Package sources are the default for published components. Local sources
+support in-repo development or vendored components.
+
+## Planned resource shape
+
+At the concept level, a component install carries six kinds of
+information:
+
+| Field | Purpose |
+| --- | --- |
+| `source` | Where the component definition comes from |
+| `name` | The install key used under `components.<name>` |
+| `env` | Values passed into `app.use(component, { env })` |
+| `options` | Pass-through configuration the component reads at install time |
+| `httpPrefix` | Whether the component exposes public HTTP routes and where they mount |
+| `test` | Optional test helper entrypoint for `convex-test` integration |
+
+That shape is intentionally close to Convex's own component model so
+Alchemy does not invent a parallel abstraction.
+
+## Generated app configuration
+
+The component substrate ultimately feeds the app's generated
+`convex.config.ts`:
+
+```ts
+import { defineApp } from "convex/server";
+import { v } from "convex/values";
+import geospatial from "@convex-dev/geospatial/convex.config.js";
+
+const app = defineApp({
+  env: {
+    OPENAI_API_KEY: v.string(),
+  },
+});
+
+app.use(geospatial, {
+  name: "geospatial",
+});
+
+export default app;
+```
+
+Alchemy DSL + Files writes this through generated files. Alchemy DSL + Runtime synthesizes the
+same module in memory. Plain Convex may use the generic resource as a
+validated install bridge or keep authoring `convex/convex.config.ts` by
+hand.
+
+## Promoted wrappers
+
+Promoted wrappers are how Alchemy goes beyond "it installs" and becomes
+meaningfully helpful. A promoted wrapper should provide:
+
+1. Component install metadata and sensible defaults.
+2. A typed app-side API expressed as `Context.Service` and `Layer`
+   pairs.
+3. Generated code hooks when the component needs wrapper modules, test
+   registration, or helper imports.
+
+At a high level, the planned wrapper shape looks like this:
+
+```ts
+interface PromotedComponentSpec {
+  source: ComponentSource;
+  defaultName: string;
+  test?: string;
+  env?: Record<string, "plain" | "secret">;
+  http?: "none" | { prefix: `/${string}`; generatedOnly?: true };
+}
+```
+
+Every promoted wrapper exposes the same two faces:
+
+- a `.use(name, options)` function that returns a component install spec
+  for `defineApp({ components: [...] })`,
+- a `Components.Foo` `Context.Service` you `yield*` from a handler for
+  the runtime client.
+
+That division keeps the substrate open-ended while letting Alchemy
+invest deeply in the components that matter most.
+
+## Maturity tiers
+
+Not every component should pretend to have the same level of support.
+The planned docs expose support tiers directly:
+
+| Tier | Meaning | Examples |
+| --- | --- | --- |
+| A - flagship | Full guide, generated code, test helper integration, Effect service, example app coverage | Migrations, Better Auth, R2, RateLimiter, Workflow, Workpool |
+| B - typed client | Generic install plus typed service and tests, but no end-to-end example app by default | Aggregate, ShardedCounter, Geospatial, Crons, ActionCache, ActionRetrier, Agent, Authz |
+| C - integration bridge | External service or scaffold heavy; docs are explicit about app-owned code and secrets | Mux, NeutralCost |
+| D - generic | Supported through `Convex.Component` only | Any component not promoted yet |
+
+Tiering is not just documentation polish. It is how the implementation
+avoids shipping wrappers that look official but are too shallow to be
+trustworthy.
+
+## Component env, HTTP, and test rules
+
+The component substrate needs firm rules so generated code stays safe:
+
+| Surface | Rule |
+| --- | --- |
+| Env | Component env should be declared explicitly and typed where upstream supports it. Secret inputs should stay redacted until the deploy boundary. |
+| HTTP routes | Public component routes are opt-in. No `httpPrefix` means no public mount. If a route needs app auth or app env, prefer generating app-side HTTP code that calls the component. |
+| Tests | If a component ships a test helper, the wrapper should register it through the test layer rather than requiring different production and test code paths. |
+| IDs across boundaries | Component IDs cross into app code as strings unless the wrapper can safely rebrand them. |
+| Runtime clients | Promoted wrappers expose Effect-returning services, not raw `ctx.runMutation(...)` helpers sprinkled through user code. |
+
+## Why component runtime state is not an Alchemy resource
+
+This distinction is easy to blur, so the docs should make it explicit.
+
+A component install **is** an Alchemy-managed deploy-time surface. Its
+runtime state usually is **not**.
+
+| Example | Resource? | Why |
+| --- | --- | --- |
+| Installing `@convex-dev/workflow` into an app | Yes | It changes the deployed app definition |
+| A workflow run created by that component | No | It is application data inside Convex |
+| Installing `@convex-dev/agent` | Yes | It is part of the deployed component graph |
+| Agent threads, messages, files, and tool calls | No | They belong to the app's runtime data model |
+| Installing `@convex-dev/migrations` | Yes | It changes the app's deploy surface |
+| Migration progress records and backfill status | No | They live in Convex tables managed by the component |
+
+This is why the docs describe components as a **substrate plus typed
+clients**. Alchemy installs and wires them. Convex runs them.
+
+## The flagship example: migrations
+
+`@convex-dev/migrations` is the clearest example of why promoted
+wrappers exist. Alchemy can add value by making the safe rollout model
+visible:
+
+- expand schema and code first,
+- backfill in batches while traffic continues,
+- verify whether old-shape data remains,
+- gate contract steps until the verify step is clean.
+
+That is much stronger than merely exposing a generic `app.use(...)`
+escape hatch.
+
+## Planned compatibility posture
+
+The generic substrate should work for all components from day one. A
+promoted wrapper is an upgrade in ergonomics and safety, not the only
+way to use a component.
+
+That matters operationally:
+
+- if a promoted wrapper lags upstream, `Convex.Component` remains the
+  escape hatch,
+- if a wrapper exists, it should add real value such as typed env,
+  generated route handling, Effect services, or safer defaults,
+- the docs should be explicit when a wrapper is a bridge around external
+  systems and therefore less turnkey than a pure Convex component.

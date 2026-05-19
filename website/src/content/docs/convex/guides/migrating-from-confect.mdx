@@ -1,0 +1,201 @@
+---
+title: Migrating from Confect
+description: Move a Confect-authored Convex app toward the Alchemy Convex DSL.
+sidebar:
+  order: 93
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+This guide covers **Confect Adapter** and the planned migration path
+from a Confect-authored Convex app to the Alchemy Convex DSL.
+
+There are two separate goals you might have:
+
+1. keep Confect for now, but let Alchemy manage deployment and
+   surrounding infrastructure
+2. gradually move from Confect's authoring model into
+   `@alchemy/convex-dsl`
+
+The design supports both. You do **not** need to rewrite everything
+in one step.
+
+## Start with the lowest-risk option
+
+If your Confect app already works, the lowest-risk path is:
+
+- keep authoring in Confect
+- let Confect do its build/codegen step
+- let Alchemy wrap the deploy as a resource
+
+That is the purpose of the planned `@alchemy/convex-confect`
+deployer.
+
+```ts
+// alchemy.run.ts
+import { App } from "@alchemy/convex-confect";
+import confectApp from "./confect/app";
+
+const backend = yield* App("Backend", {
+  app: confectApp,
+  project: "notes-app",
+  type: "dev",
+});
+```
+
+This gets you Alchemy lifecycle, plans, and infra composition without
+forcing an immediate authoring migration.
+
+## What maps cleanly
+
+Confect and the Alchemy DSL are close enough that several concepts
+translate directly.
+
+| Confect | `@alchemy/convex-dsl` |
+| --- | --- |
+| `DatabaseSchema.make().addTable(...)` | `defineSchema({ ... })` |
+| `Table.make("notes", schema)` | `table(schema)` under key `notes` |
+| `FunctionSpec.publicQuery` | `query.spec(...)` or `query(...)` |
+| `GroupSpec.make("notes")` | `defineGroup("notes", { ... })` |
+| `FunctionImpl.make(...)` | `spec.implement(...)` or inline `handler` |
+| `Impl.finalize(...)` | `defineApp({ groups, ... })` |
+| generated refs/services | `convex/_alchemy/refs` and `convex/_alchemy/services` |
+| `@confect/react` | `@alchemy/convex-dsl/react` |
+| `@confect/test` | `@alchemy/convex-dsl/test` |
+
+That means a migration can usually preserve:
+
+- table structure
+- group boundaries
+- function intent
+- test shape
+- client call sites
+
+even when the exact API syntax changes.
+
+## What does not map 1:1
+
+Some parts of the migration should be treated as design work, not
+find-and-replace.
+
+### App assembly
+
+Confect's finalize/build flow becomes `defineApp({ ... })`, which is a
+more explicit top-level contract for:
+
+- schema
+- groups
+- HTTP routes
+- components
+- migrations
+
+This is usually better, but it means the "where does the app come
+together?" story changes.
+
+### Generated file ownership
+
+In the DSL modes, Alchemy owns `convex/_alchemy/**` and merge-manages
+some top-level files. Confect users used to a different codegen layout
+need to adopt that ownership boundary consciously.
+
+### Migrations
+
+The Alchemy DSL wants migrations declared as part of the app contract
+with explicit **expand / backfill / contract** semantics. If your
+Confect app handled data evolution more ad hoc, this is a behavior
+change, not just a syntax change.
+
+### Promoted components
+
+Promoted wrappers such as Better Auth, R2, and RateLimiter may replace
+custom glue you wrote around Confect or Plain Convex packages. The
+migration is often worth it, but it is still a redesign surface.
+
+## The planned `fromConfect()` adapter
+
+For teams that want a bridge instead of a rewrite, the design includes
+a planned adapter:
+
+```ts
+import { fromConfect } from "@alchemy/convex-confect";
+
+export default fromConfect({
+  schema: confectSchema,
+  spec: confectSpec,
+  impl: confectImpl,
+});
+```
+
+The intent is:
+
+- preserve your current Confect app structure
+- expose it through the Alchemy DSL app contract
+- let you adopt the surrounding Alchemy deploy model first
+- make incremental migration possible later
+
+This adapter is intentionally described as optional. It should help
+with migration pressure, not define the long-term native API.
+
+## Suggested migration path
+
+For most teams, the safest sequence is:
+
+1. Wrap the existing Confect app with `@alchemy/convex-confect`.
+2. Move infrastructure concerns into Alchemy resources.
+3. Freeze the current Confect behavior with tests.
+4. Port schema definitions into `defineSchema`.
+5. Port one group at a time into `defineGroup`.
+6. Introduce `defineApp` once enough of the app has moved.
+7. Add migrations and promoted components only after the basic app is
+   stable in the new model.
+
+That order matters. It keeps "how we deploy" separate from
+"how we author the whole backend."
+
+## A practical first migration
+
+A good first target is a leaf group with minimal external coupling.
+
+For example, migrate a `notes` group like this:
+
+1. Copy the Confect table definition into `defineSchema`.
+2. Port `publicQuery` and `publicMutation` specs into `query` and
+   `mutation`.
+3. Keep the same argument and return shapes.
+4. Port implementation logic into Effect handlers using generated
+   database services.
+5. Compare client call sites and test outputs before touching more
+   sensitive groups.
+
+This gives you a real end-to-end proof without forcing auth,
+migrations, and component wiring into the same first step.
+
+## How to decide when to stop using Confect
+
+You are ready to stop routing through Confect when:
+
+- the schema lives natively in `defineSchema`
+- the important groups live in `defineGroup`
+- client code uses the new refs/services surface
+- tests cover the migrated behavior
+- any required migrations have been declared explicitly
+
+Until then, it is reasonable to keep Confect in the loop and let
+Alchemy manage the deployment boundary around it.
+
+## Recommended destination
+
+For most migrations, the destination should be
+[Convex App Quickstart](/convex/guides/app-quickstart), not the
+runtime deployer.
+
+Alchemy DSL + Files is the best landing zone because it:
+
+- preserves a normal file-based Convex deploy
+- makes generated ownership explicit
+- gives you the DSL, typed services, and migration model
+- avoids introducing the experimental runtime protocol at the same
+  time as a Confect migration
+
+That keeps the migration focused on authoring clarity instead of
+compounding it with deploy-path experimentation.

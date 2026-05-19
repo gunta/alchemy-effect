@@ -1,0 +1,207 @@
+---
+title: Convex and Cloudflare R2
+description: Install the official Convex R2 component around Alchemy-owned Cloudflare buckets.
+sidebar:
+  order: 97
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+`Components.R2` should stay close to the official `@convex-dev/r2`
+component. Alchemy should provision and wire the infrastructure around it, not
+replace the upstream API with a new storage dialect.
+
+The split is:
+
+- Cloudflare R2 stores the actual objects.
+- The official Convex component stores metadata and exposes signed-upload,
+  signed-read, delete, and metadata functions.
+- Alchemy owns the bucket, env vars, secrets, component install, generated
+  glue, and deploy-time checks.
+
+## What the wrapper owns
+
+| Surface | Owner |
+| --- | --- |
+| `Cloudflare.R2Bucket(...)` | Cloudflare provider resources |
+| R2 bucket CORS | Cloudflare resource or explicit manual precondition |
+| `Convex.EnvironmentVariable(...)` for R2 env | Convex deploy-time env resources |
+| `app.use(r2)` | Generated `convex.config.ts` component install |
+| `new R2(components.r2)` | Generated Convex app helper |
+| App auth for uploads and deletes | Your application code |
+
+Generated code must not publish unauthenticated upload, read, sync, or delete
+endpoints by default.
+
+## Planned API
+
+```ts
+const bucket = yield* Cloudflare.R2Bucket("Uploads", {
+  name: "uploads",
+});
+
+const uploads = yield* Components.R2("uploads", {
+  component: "r2",
+  bucket,
+  credentials: {
+    accessKeyId: Config.redacted("R2_ACCESS_KEY_ID"),
+    secretAccessKey: Config.redacted("R2_SECRET_ACCESS_KEY"),
+    token: Config.redacted("R2_TOKEN"),
+  },
+  endpoint: Config.string("R2_ENDPOINT"),
+  cors: {
+    allowedOrigins: ["https://app.example.com"],
+    allowedMethods: ["GET", "PUT"],
+    allowedHeaders: ["Content-Type"],
+  },
+  client: {
+    module: "files",
+    exposeClientApi: {
+      checkReadKey: "requireFileRead",
+      checkUpload: "requireFileUpload",
+      checkDelete: "requireFileDelete",
+      onUpload: "afterFileUpload",
+    },
+  },
+});
+```
+
+The wrapper is intentionally a deploy bridge. It derives `R2_BUCKET` from the
+bucket resource, accepts or derives the non-secret `R2_ENDPOINT`, wires secret
+env through Convex env resources, installs the component, and writes ordinary
+Convex code that uses the upstream package.
+
+## Generated Convex code
+
+Alchemy should generate the same shape the component README recommends:
+
+```ts
+// convex/files.ts
+import { R2 } from "@convex-dev/r2";
+import { components } from "./_generated/api";
+import type { DataModel } from "./_generated/dataModel";
+
+export const r2 = new R2(components.r2);
+
+export const {
+  generateUploadUrl,
+  syncMetadata,
+  onSyncMetadata,
+  getMetadata,
+  listMetadata,
+  deleteObject,
+} = r2.clientApi<DataModel>({
+  checkReadKey: requireFileRead,
+  checkUpload: requireFileUpload,
+  checkDelete: requireFileDelete,
+  onUpload: afterFileUpload,
+});
+```
+
+Frontend code should use the official hooks. This snippet runs inside a
+React component, not the Alchemy stack body — `await` is appropriate
+there:
+
+```tsx
+// React component, not Alchemy stack code
+import { useUploadFile } from "@convex-dev/r2/react";
+import { api } from "../convex/_generated/api";
+
+const uploadFile = useUploadFile(api.files);
+const key = await uploadFile(file);
+```
+
+## Derived environment variables
+
+| Name | Secret? | Source |
+| --- | --- | --- |
+| `R2_BUCKET` | No | Cloudflare bucket name |
+| `R2_ENDPOINT` | No | S3-compatible endpoint, accepted from config or derived from the Cloudflare account |
+| `R2_TOKEN` | Yes | Cloudflare R2 token value |
+| `R2_ACCESS_KEY_ID` | Yes | Secret input or credential resource |
+| `R2_SECRET_ACCESS_KEY` | Yes | Secret input or credential resource |
+
+If Alchemy later grows a first-class R2 S3 credential resource, the wrapper
+should accept that too. Until then, secret inputs are the expected path.
+
+## App-side service shape
+
+The promoted service should mirror upstream method names. Thin Effect wrappers
+are useful for app code, but the generated Convex module must stay recognizable
+to a Convex user reading the official component docs.
+
+| Method | Purpose |
+| --- | --- |
+| `getUrl` | Produce a signed read URL for an object key |
+| `generateUploadUrl` | Produce a signed upload URL and object key |
+| `store` | Store a `Blob`, `Buffer`, or `Uint8Array` from an action and sync metadata |
+| `syncMetadata` | Reconcile object metadata after an upload |
+| `getMetadata` | Read metadata for a single object |
+| `listMetadata` | Paginate metadata records for the configured bucket |
+| `deleteObject` | Delete object and metadata, with app-owned auth around it |
+| `clientApi` | Export typed public functions for hooks and direct clients |
+
+For multiple buckets, generate multiple `R2` instances with explicit
+`bucket`, `endpoint`, `accessKeyId`, and `secretAccessKey` config. The
+component keeps metadata for all buckets in one table, indexed by bucket name.
+
+## Suggested rollout
+
+1. Provision the bucket with `Cloudflare.R2Bucket(...)`.
+2. Configure bucket CORS for the app origins that need browser uploads.
+3. Add secret credentials and derive the plain endpoint and bucket env.
+4. Install `Components.R2(...)`.
+5. Generate the upstream-shaped `new R2(components.r2)` helper.
+6. Expose authenticated functions through `clientApi<DataModel>()`.
+7. Verify codegen drift in CI before deploy.
+
+## Commands
+
+```sh
+alchemy plan
+alchemy deploy
+alchemy codegen --check
+```
+
+Plan output should make the bridge obvious:
+
+```txt
+Components
+  + install @convex-dev/r2 as components.r2
+
+Secrets
+  + set R2_BUCKET             uploads
+  + set R2_ENDPOINT           https://<account>.r2.cloudflarestorage.com
+  + set R2_TOKEN              (redacted, update)
+  + set R2_ACCESS_KEY_ID      (redacted, update)
+  + set R2_SECRET_ACCESS_KEY  (redacted, no change)
+
+Codegen
+  + write convex/files.ts
+  + expose generateUploadUrl, syncMetadata, getMetadata, listMetadata, deleteObject
+
+Cloudflare
+  ! R2 CORS must allow GET and PUT from https://app.example.com
+```
+
+## Recovery scenarios
+
+| Situation | Expected response |
+| --- | --- |
+| Metadata exists but object is missing | Re-sync or mark the record unhealthy before serving it |
+| Object exists but metadata is missing | Run metadata sync instead of silently leaking the object |
+| Signed URL expired | Re-issue through app code; do not depend on a stale client-side URL |
+
+## Caveats
+
+- This wrapper is not a Cloudflare Worker binding shortcut. Keep application
+  auth and upload authorization in your own Convex code.
+- The upstream browser upload path needs R2 bucket CORS allowing `GET` and
+  `PUT` from the app origin with `Content-Type`.
+- Plain env and secret env have different ownership and redaction behavior.
+- `R2_TOKEN` is part of the Cloudflare-issued token set. The runtime
+  constructor primarily uses bucket, endpoint, access key ID, and secret access
+  key, but Alchemy should still track the token as a secret input when it is
+  needed for provisioning or rotation.
+- Signed read URLs default to short expiry upstream; permanent CDN URLs should
+  use an R2 custom domain and app-owned URL construction.

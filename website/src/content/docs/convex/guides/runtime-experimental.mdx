@@ -1,0 +1,308 @@
+---
+title: Convex Runtime Deployer
+description: Try the experimental runtime deployer that pushes Convex code without the Convex CLI.
+sidebar:
+  order: 92
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Alchemy DSL + Runtime is **experimental**.
+
+It uses the same `defineApp(...)` DSL as
+[Convex App Quickstart](/convex/guides/app-quickstart), but swaps the
+file-writing deployer for a runtime deployer that bundles the app in
+memory and pushes it directly through Convex's `deploy2` protocol.
+
+Use this mode only when you explicitly want **zero Convex source
+files in the repo** and are comfortable tracking a tighter
+compatibility contract.
+
+## What changes from Alchemy DSL + Files
+
+The authoring model stays the same:
+
+- same schema DSL
+- same groups
+- same generated wrappers
+- same component model
+- same migration declarations
+
+The deployment sink changes:
+
+- **Alchemy DSL + Files** writes generated files to `convex/_alchemy/` and runs
+  `convex deploy`
+- **Alchemy DSL + Runtime** keeps the generated file map in memory and reproduces
+  Convex's deploy protocol directly
+
+The design goal is that moving between the two is mostly an import
+swap:
+
+```ts
+// Alchemy DSL + Files
+import { App } from "@alchemy/convex-files";
+
+// Alchemy DSL + Runtime
+import { App } from "@alchemy/convex-runtime";
+```
+
+Every other `App(...)` prop you saw in
+[Convex App Quickstart](/convex/guides/app-quickstart) — `migrations`,
+`env`, `project`, `type`, component installs — still applies. The
+runtime deployer differs in **how** the bundle reaches Convex, not in
+the shape of what gets deployed.
+
+## Why the guide is marked experimental
+
+Alchemy DSL + Runtime does **not** shell out to `convex deploy`. It reproduces the
+same network protocol and bundling contract itself.
+
+That is powerful, but it creates a new maintenance burden:
+
+- if Convex changes the deploy protocol, the runtime deployer must
+  track it
+- if Convex changes bundle assumptions, the in-memory bundler must
+  stay byte-equivalent enough to keep working
+- if a deploy fails, debugging moves from "what did the CLI do?" to
+  "what did our protocol client do?"
+
+The implementation plan treats this as a serious surface, not a
+casual optimization.
+
+## The planned app shape
+
+The DSL app stays the same as Alchemy DSL + Files:
+
+```ts
+// src/convex/app.ts
+import { defineApp } from "@alchemy/convex-dsl";
+import { schema } from "./schema";
+import { notes } from "./notes";
+
+export default defineApp({
+  schema,
+  groups: { notes },
+});
+```
+
+The stack entrypoint changes deployers:
+
+```ts
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Convex from "@alchemy/convex";
+import { App } from "@alchemy/convex-runtime";
+import * as Effect from "effect/Effect";
+import app from "./src/convex/app";
+
+export default Alchemy.Stack(
+  "RuntimeConvexApp",
+  {
+    providers: Convex.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const backend = yield* App("Backend", {
+      app,
+      project: "notes-app",
+      type: "dev",
+    });
+
+    return {
+      deploymentUrl: backend.deploymentUrl,
+    };
+  }),
+);
+```
+
+## What the runtime deployer actually does
+
+The planned deploy flow mirrors Convex CLI behavior in four stages:
+
+1. Compile the DSL app into the same shared generated file map that
+   Alchemy DSL + Files would have written.
+2. Bundle those virtual files with esbuild, while importing user
+   handler modules from real source files on disk.
+3. Build the `start_push` payload that Convex expects.
+4. Call the `deploy2` endpoints directly:
+   `start_push`, `wait_for_schema`, `finish_push`, and
+   `report_push_completed`.
+
+The docs are explicit about this because the risk is not "runtime push
+sounds fancy." The risk is **protocol drift**.
+
+## Byte-equivalence is the guardrail
+
+The main safety guarantee for Alchemy DSL + Runtime is a planned
+**byte-equivalence-style test** against Convex CLI dry-run output.
+
+The test idea is:
+
+1. run `convex deploy --dry-run` for a fixture app
+2. capture the request body Convex CLI would send
+3. build the same app with `@alchemy/convex-runtime`
+4. normalize known unstable fields
+5. compare the resulting payloads
+
+This does not mean every byte is literally identical after
+normalization, but it does mean the runtime deployer is validated
+against the same wire contract Convex itself uses.
+
+Without that test, Alchemy DSL + Runtime should not be trusted in production.
+
+## When to avoid Alchemy DSL + Runtime
+
+Do **not** start here if any of the following are true:
+
+- you are new to the Convex integration
+- you want to inspect generated files in git
+- you rely on the normal Convex CLI as your primary debugging surface
+- your team is uncomfortable with experimental protocol clients
+- you need the most conservative path for a production rollout
+
+In those cases, use Alchemy DSL + Files.
+
+Alchemy DSL + Runtime is for teams that specifically value:
+
+- no `convex/` app files committed
+- an all-in-memory build path
+- tighter control over deploy internals
+
+## Local backend and dev mode
+
+Alchemy DSL + Runtime is also the mode with the most ambitious local story.
+
+The planned design includes `Convex.LocalBackend`, a resource that
+manages a local Convex backend process for development mode. The
+intended dev loop is:
+
+1. start a local backend
+2. keep `Convex.AppBundle` live under a watcher
+3. invalidate on file changes
+4. re-bundle
+5. hot-push to the local backend
+
+This matters because Alchemy DSL + Runtime has no generated on-disk app files to
+watch. The reconciler itself becomes the dev engine.
+
+### Planned local mode
+
+```ts
+const backend = yield* App("Backend", {
+  app,
+  project: "notes-app",
+  type: "dev",
+  dev: {
+    mode: "local",
+  },
+});
+```
+
+Local mode is the expected default for the experimental workflow:
+
+- faster save-to-screen loops
+- no cloud dependency for every edit
+- easier iteration when working on the generated runtime path itself
+
+### Planned cloud dev fallback
+
+```ts
+const backend = yield* App("Backend", {
+  app,
+  project: "notes-app",
+  type: "dev",
+  dev: {
+    mode: "cloud",
+  },
+});
+```
+
+This still uses the runtime deployer, but targets a real cloud dev
+deployment instead of a local backend.
+
+## Expected failure modes
+
+Alchemy DSL + Runtime needs better error language than "deploy failed." The design
+calls out a few concrete failure classes.
+
+### Bundle errors
+
+Examples:
+
+- TypeScript errors
+- esbuild resolution errors
+- a generated virtual module referring to something that no longer
+  exists
+
+Expected behavior:
+
+- the previous good bundle stays live in dev mode
+- the error is tagged as a bundle failure
+- fixing the source and saving retries the same pipeline
+
+### Schema validation failures
+
+Examples:
+
+- invalid schema change
+- generated component config rejected by Convex
+- migration plan not acceptable to the server
+
+Expected behavior:
+
+- `start_push` or `wait_for_schema` returns a structured failure
+- the backend remains on the previous committed version
+- the user gets a schema-specific error, not a generic runtime crash
+
+### Schema race errors
+
+Example:
+
+- another deploy lands while this one is waiting on schema readiness
+
+Expected behavior:
+
+- surface a specific schema race error
+- retry or require operator action based on the deployment mode
+
+### Protocol drift
+
+Example:
+
+- Convex changes the `deploy2` request or response shape
+
+Expected behavior:
+
+- fail in one contained API client layer
+- trip the byte-equivalence test in CI
+- steer users back to Alchemy DSL + Files until compatibility is restored
+
+## What Alchemy DSL + Runtime does not try to reproduce
+
+The planned docs are intentionally honest about scope. Alchemy DSL + Runtime does
+not aim to reproduce every user-visible behavior of `convex deploy`.
+
+Known differences include:
+
+- no `_generated/*.ts` files written to disk
+- IDE and CI typechecking stay responsible for source type checks
+- dashboard source views may show bundled output rather than authored
+  modules
+
+Those trade-offs are acceptable only because the authoring API stays
+typed from the `defineApp` source of truth.
+
+## Recommendation
+
+Treat Alchemy DSL + Runtime as a deliberate optimization, not the default.
+
+Start with [Convex App Quickstart](/convex/guides/app-quickstart) if
+you want the best-supported path. Move to Alchemy DSL + Runtime later when your
+team has a concrete reason to prefer:
+
+- no generated Convex files on disk
+- direct deploy protocol control
+- experimental maintenance cost in exchange for a tighter workflow
+
+That keeps the risky part narrow while still letting the runtime
+deployer exist for the teams that really want it.

@@ -1,0 +1,196 @@
+---
+title: Convex Migrations
+description: Run online Convex migrations with expand, backfill, and contract phases.
+sidebar:
+  order: 94
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Convex migrations are the most important place where the Alchemy
+integration should be safer than "run a script and hope". The planned
+`defineMigrations` API models the full rollout, not only the backfill:
+
+1. Expand the schema and readers/writers so old and new documents both work.
+2. Backfill live data in batches while traffic continues.
+3. Contract only after verification proves the old shape is gone.
+
+If you are migrating production data, this is the default path we want
+teams to reach for first.
+
+## The rollout model
+
+The flagship API is `m.online(...)`. It records rollout intent in source
+control, generates the underlying `@convex-dev/migrations` functions, and
+gives `alchemy plan` enough metadata to block unsafe contract deploys.
+
+```ts
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { defineApp, defineMigrations } from "@alchemy/convex-dsl";
+
+const migrations = defineMigrations((m) => [
+  m.online("20260519_user_display_name", {
+    strategy: "dual-write",
+    table: schema.tables.users,
+    batchSize: 100,
+    schedule: { maxParallelBatches: 1 },
+    expand: {
+      summary: "displayName is optional and writers fill both fields",
+      requires: [
+        m.schemaField("users", "displayName").optional(Schema.String),
+        m.writer("users").writes(["name", "displayName"]),
+        m.reader("users").reads("name"),
+      ],
+    },
+    migrateOne: (user) =>
+      Effect.gen(function* () {
+        if (user.displayName !== undefined) return {};
+        return { displayName: user.name };
+      }),
+    verify: {
+      remaining: (q) => q.filter((q) => q.eq(q.field("displayName"), undefined)),
+      sample: 20,
+    },
+    contract: {
+      summary: "all readers and writers use displayName only",
+      after: "completed",
+      requires: [
+        m.reader("users").reads("displayName"),
+        m.writer("users").writes(["displayName"]),
+        m.noRemaining("users", "displayName"),
+      ],
+    },
+  }),
+]);
+
+export default defineApp({ schema, groups, migrations });
+```
+
+For lightweight maintenance work, the same module also supports:
+
+| API | Use it for | Production stance |
+| --- | --- | --- |
+| `m.online(...)` | Renames, type changes, dual-write rollouts, and anything that needs a safe contract gate | Recommended default |
+| `m.table(...)` / `m.backfill(...)` | Lower-level staged backfills when you already know the rollout shape | Allowed, but less guided |
+| `m.patch(...)` | Small source-controlled data edits that replace dashboard bulk edit | Defaults to `scope: "dev"` and refuses prod unless explicitly unlocked |
+
+## What gets generated
+
+Alchemy DSL + Files writes the migration implementation to
+`convex/_alchemy/migrations.ts` and expects your stable
+`convex/migrations.ts` re-export to forward it. Function names stay in the
+`migrations:*` namespace, so operational commands are predictable.
+
+```ts
+import { Migrations } from "@convex-dev/migrations";
+import { components, internal } from "./_generated/api.js";
+import { internalMutation, internalQuery } from "./_generated/server.js";
+
+export const migrations = new Migrations(components.migrations, {
+  internalMutation,
+  migrationsLocationPrefix: "migrations:",
+});
+
+export const userDisplayName = migrations.define({ /* generated migrateOne */ });
+export const verifyUserDisplayName = internalQuery({ /* generated verify */ });
+export const runPending = migrations.runner([
+  internal.migrations.userDisplayName,
+]);
+```
+
+Generated migration functions are internal by default. The planned docs do
+not generate public write surfaces for backfills.
+
+## Deploy modes
+
+The deployer accepts migration instructions on the deployer-specific
+`App(...)` helper, such as `@alchemy/convex-files` for Alchemy DSL + Files or
+`@alchemy/convex-runtime` for Alchemy DSL + Runtime. The production-safe
+default is `phase: "manual"` — Alchemy deploys the migration functions but
+does not run them. It prints the exact `convex run` commands so an operator
+can decide when to backfill:
+
+```ts
+const backend = yield* App("Backend", {
+  app,
+  project: "my-app",
+  type: "prod",
+  migrations: {
+    phase: "manual",
+    production: {
+      allowContract: false,
+      requireCleanVerify: true,
+    },
+  },
+});
+```
+
+To opt into a backfill that Alchemy starts and waits on:
+
+```ts
+migrations: {
+  phase: "backfill",
+  run: "wait",
+  dryRunFirst: true,
+  timeout: Duration.minutes(30),
+},
+```
+
+| Mode | What Alchemy does |
+| --- | --- |
+| `phase: "manual"` | Deploys the migration functions only and prints the exact `convex run` commands. Default production posture. |
+| `phase: "expand"` | Deploys permissive schema and code, but refuses contract work. |
+| `phase: "backfill"` + `run: "start"` | Starts `migrations:runPending` after deploy and exits once the component accepts the run. |
+| `phase: "backfill"` + `run: "wait"` | Starts the backfill, polls status and verify, and fails the deploy if anything errors or times out. |
+| `phase: "contract"` | Runs only after the migration is complete, verify is clean, and production allows contract. |
+
+## Operational commands
+
+The plan output should read like a checklist and print the exact follow-up
+commands when Alchemy is not running them for you.
+
+```sh
+alchemy plan
+alchemy deploy
+convex run migrations:runPending '{}'
+convex run migrations:verifyUserDisplayName '{}'
+```
+
+Expected plan shape:
+
+```txt
+Migrations
+  expand   20260519_user_display_name       ready
+  backfill 20260519_user_display_name       pending, run=wait, dry-run-first
+  contract 20260519_user_display_name       blocked until verify is clean
+```
+
+## Safety rules
+
+| Rule | Why it exists |
+| --- | --- |
+| Migration names are immutable once completed | Changing code under the same name hides what actually ran in production |
+| Completed migrations are append-only unless retired | Teammates and lower environments may still need to run them |
+| `dryRunFirst: true` is strongly recommended | It catches obvious patch mistakes before mutating documents |
+| Contract requires clean `verify` output | You should not narrow schema or remove readers while old documents remain |
+| Dual-write is the default for renames | It keeps rollback to the old code path viable |
+| `m.patch(...)` cannot remove a field unless explicitly destructive | Small maintenance patches should not become silent schema contractions |
+
+## Recommended production sequence
+
+1. Land the `expand` step with permissive schema and dual-write readers/writers.
+2. Run `alchemy plan` and confirm the migration section shows `expand ... ready`.
+3. Deploy with `phase: "backfill"` and either `run: "manual"` or `run: "wait"`.
+4. Watch status until `verify` is clean.
+5. Flip to `phase: "contract"` only after the old readers and writers are gone.
+
+## Caveats
+
+- The wrapper intentionally uses `@convex-dev/migrations` for production
+  backfills instead of bypassing it with ad hoc provider logic.
+- `run: "wait"` is a good demo path and can work in controlled production
+  rollouts, but long backfills may be better driven manually.
+- A blocked contract is a success signal, not a nuisance. It means the docs
+  and plan are preventing a destructive deploy too early.

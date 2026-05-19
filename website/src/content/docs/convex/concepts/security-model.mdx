@@ -1,0 +1,223 @@
+---
+title: Convex Security Model
+description: Understand deploy credentials, runtime secrets, generated HTTP routes, and privacy boundaries for Convex on Alchemy.
+sidebar:
+  order: 94
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+## Overview
+
+The planned Convex integration has two very different trust zones:
+
+- **deploy time**: provider credentials, deploy keys, control-plane API
+  access, and code generation,
+- **runtime**: application code, Convex environment variables, host
+  bindings, public HTTP routes, and operational logs.
+
+The security model is mostly about keeping those zones separate.
+
+## Deploy credentials are not runtime credentials
+
+The provider needs credentials to manage Convex resources and deploy
+applications. Those credentials are deploy-time only.
+
+| Credential | Purpose | Should generated runtime code receive it? |
+| --- | --- | --- |
+| `CONVEX_TEAM_TOKEN` | Convex cloud management API access | No |
+| OAuth token stored by Alchemy | Interactive management and deployment auth | No |
+| `CONVEX_DEPLOY_KEY` | Deployment admin API access | No, unless a user deliberately binds an admin capability later |
+| `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted admin access | No |
+
+Planned provider behavior:
+
+- credentials are loaded with `Config.redacted(...)` or equivalent auth
+  helpers,
+- they stay as `Redacted<string>` until the subprocess or HTTP boundary
+  that actually needs them,
+- they do not enter generated Convex handlers, generated client code, or
+  host runtime bundles.
+
+## `Alchemy.Secret` and `Redacted`
+
+When the same value must exist at runtime, it should be bound through
+the runtime secret model, not reused by smuggling deploy credentials
+through codegen.
+
+```ts
+const openAiKey = Config.redacted("OPENAI_API_KEY");
+
+yield* Convex.EnvironmentVariable("OpenAIKey", {
+  deployment,
+  name: "OPENAI_API_KEY",
+  value: openAiKey,
+});
+```
+
+If a Worker or Lambda also needs the value, that is a separate runtime
+binding concern:
+
+```ts
+const apiKey = yield* Alchemy.Secret("OPENAI_API_KEY");
+```
+
+The planned rule is:
+
+- `Redacted<string>` is the transport type for sensitive deploy-time and
+  runtime values,
+- provider state may remember hashes, versions, or target names,
+  but not unsafe secret strings,
+- secrets are unwrapped only at the final outbound boundary that needs
+  the raw value.
+
+## Convex environment variables
+
+Convex application env vars are a first-class deploy surface. They are
+not the same thing as Alchemy's own provider credentials.
+
+| Surface | Intended use |
+| --- | --- |
+| `Convex.EnvironmentVariable` | Deployment-scoped application env vars |
+| `Convex.ProjectEnvVar` | Project-scoped application env vars where the control plane supports it |
+| `Alchemy.Secret` / `Alchemy.Variable` | Host runtime bindings for Workers, Lambdas, or other runtimes |
+
+The docs contract should distinguish:
+
+- secret env values, which remain redacted in state and logs,
+- plain env values such as `SITE_URL` or bucket names, which are safe to
+  display in plan output,
+- generated typed env declarations, where supported by Convex or a
+  component's config surface.
+
+## Component env
+
+Components can have their own env contract, and the wrapper should not
+hide that.
+
+```ts
+yield* Convex.Component("rag", {
+  source: { package: "@convex-dev/rag", version: "^1.2.3" },
+  name: "rag",
+  env: {
+    OPENAI_API_KEY: openAiKey,
+  },
+  httpPrefix: "/rag",
+});
+```
+
+Planned rules for component env:
+
+- env is explicit at install time,
+- secret env stays secret all the way to the deployment boundary,
+- generated `convex.config.ts` should declare typed env when upstream
+  component APIs support it,
+- raw `process.env` reads are an upstream caveat or escape hatch, not the
+  default mental model.
+
+## Generated public HTTP routes
+
+Public routes are sensitive because they turn codegen into an externally
+reachable API surface.
+
+The contract for the implementation is conservative:
+
+- generated public HTTP routes are opt-in by default,
+- component routes mount only when `httpPrefix` is provided,
+- auth integrations that generate routes must document exactly which
+  paths become public,
+- generated routes should prefer app-owned wrappers when the route needs
+  app auth, app env, or additional verification logic.
+
+Examples the docs should call out explicitly:
+
+| Generated route surface | Why it matters |
+| --- | --- |
+| Better Auth routes such as `/api/auth/*` | Handles sign-in flows and callback URLs |
+| Mux webhook routes | Must verify signatures and avoid noisy logging |
+| Component HTTP routes via `httpPrefix` | Become public only when mounted intentionally |
+
+## Logging and privacy
+
+The integration should assume that plan output, deploy logs, and runtime
+logs are all high-risk places for accidental leakage.
+
+The planned privacy contract is:
+
+- do not print secret values in plan output,
+- do not log request headers, auth tokens, or provider SDK responses
+  without redaction,
+- do not dump migration document bodies by default,
+- do not bundle management-plane responses into runtime error objects,
+- show operational intent without exposing sensitive payloads.
+
+Safe plan output example:
+
+```txt
+Secrets
+  + set BETTER_AUTH_SECRET      (redacted, create)
+  + set SITE_URL                https://app.example.com
+  + set CONVEX_SITE_URL         https://acme-prod.convex.site
+```
+
+## `.env.example` should contain names only
+
+Example applications should demonstrate expected variable names without
+shipping sample secrets.
+
+```dotenv
+CONVEX_TEAM_TOKEN=
+CONVEX_DEPLOY_KEY=
+CONVEX_SELF_HOSTED_URL=
+CONVEX_SELF_HOSTED_ADMIN_KEY=
+OPENAI_API_KEY=
+BETTER_AUTH_SECRET=
+SITE_URL=
+CONVEX_SITE_URL=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+MUX_TOKEN_ID=
+MUX_TOKEN_SECRET=
+MUX_WEBHOOK_SECRET=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
+R2_ENDPOINT=
+```
+
+Some of these are mutually exclusive. The important rule is that docs,
+examples, and starter apps should publish the **names** users must set,
+never real values.
+
+## What the runtime should receive
+
+At runtime, the app should receive only the values needed to serve
+requests and talk to its dependencies:
+
+| Runtime surface | Allowed |
+| --- | --- |
+| Convex handlers | Application env, typed services, component clients, request context |
+| Worker/Lambda bindings | Values explicitly bound through `Alchemy.Secret`, `Alchemy.Variable`, or provider bindings |
+| Generated client code | Public URLs, function refs, and client-safe metadata only |
+
+What runtime code should **not** receive by default:
+
+- team tokens,
+- deploy keys,
+- provider-side OAuth credentials,
+- raw management API responses,
+- unrelated component secrets that were never mounted into that runtime.
+
+## Security model summary
+
+The planned design stays safe by making boundaries obvious:
+
+- deploy credentials stay deploy-time only,
+- runtime secrets stay redacted until the last responsible moment,
+- public routes are explicit,
+- component env is declared instead of assumed,
+- logs and state snapshots avoid secret material by default.
+
+That boundary discipline matters as much as the resource model. Without
+it, a docs-first Convex integration would be easy to describe and too
+easy to misuse.

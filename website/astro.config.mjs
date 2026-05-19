@@ -220,6 +220,10 @@ export default defineConfig({
           ],
         },
         {
+          label: "Convex",
+          autogenerate: { directory: "convex" },
+        },
+        {
           label: "Concepts",
           autogenerate: { directory: "concepts" },
         },

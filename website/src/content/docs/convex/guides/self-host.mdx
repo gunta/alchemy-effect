@@ -1,0 +1,135 @@
+---
+title: Self-hosted Convex
+description: Use Alchemy with a self-hosted Convex deployment.
+sidebar:
+  order: 101
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+The Convex provider is planned to support self-host mode without pretending
+the hosted Convex control plane still exists. The rule is simple:
+
+- Deployment-scoped resources should keep working.
+- Cloud-only dashboard resources should be skipped or unavailable.
+- Every deployer mode should route to the self-hosted URL correctly.
+
+## Enable self-host mode
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Convex from "@alchemy/convex";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "my-app",
+  {
+    providers: Convex.providers({ selfHosted: true }),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    // project, deployment, env vars, and bundle/app deploy resources go here
+  }),
+);
+```
+
+When you mix self-hosted Convex with other providers, merge the layers
+the usual way:
+
+```ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Layer from "effect/Layer";
+
+providers: Layer.mergeAll(
+  Convex.providers({ selfHosted: true }),
+  Cloudflare.providers(),
+),
+```
+
+Credential resolution changes to:
+
+```txt
+CONVEX_SELF_HOSTED_URL
+CONVEX_SELF_HOSTED_ADMIN_KEY
+```
+
+The planned credential shape — values are pulled via `effect/Config` so
+they never appear in checked-in code:
+
+```ts
+import * as Config from "effect/Config";
+
+{
+  url: Config.string("CONVEX_SELF_HOSTED_URL"),
+  adminKey: Config.redacted("CONVEX_SELF_HOSTED_ADMIN_KEY"),
+}
+```
+
+## What still works
+
+| Category | Status in self-host mode |
+| --- | --- |
+| Per-deployment admin resources | Supported |
+| `Convex.Bundle` / Plain Convex deploy | Supported via `convex deploy --url ... --admin-key ...` |
+| Alchemy DSL + Files file deploy | Supported; same generated files, different target |
+| Alchemy DSL + Runtime runtime push | Supported; runtime `App(...)` targets the self-host URL |
+| Env vars and app scaffolding | Supported |
+
+## What is cloud-only
+
+These planned resources are skipped because they belong to the hosted Convex
+dashboard plane:
+
+| Resource | Why it is skipped |
+| --- | --- |
+| `PeriodicBackup` | Hosted control-plane feature |
+| `ManualBackup` | Hosted control-plane feature |
+| `CustomDomain` | Hosted control-plane feature |
+| `DeployKey` | Hosted control-plane feature |
+| `PreviewDeployment` | Hosted control-plane feature |
+| `SSO` | Hosted team feature |
+| `OAuthApp` | Hosted team feature |
+| `TeamInvite` | Hosted team feature |
+| `TeamMember` | Hosted team feature |
+
+## Commands
+
+```sh
+export CONVEX_SELF_HOSTED_URL="https://convex.example.com"
+export CONVEX_SELF_HOSTED_ADMIN_KEY="..."
+alchemy plan
+alchemy deploy
+```
+
+## Migration path from hosted to self-host
+
+1. Replace hosted credentials with the self-host URL and admin key.
+2. Keep the same app code and deployer mode if possible.
+3. Re-run `alchemy plan` and confirm cloud-only resources are skipped.
+4. Deploy and verify app-level resources, env vars, and routes still converge.
+
+## Parity test
+
+Self-host support should ship with a parity test that runs the same app
+manifest against both hosted and self-hosted targets. The test should assert:
+
+- generated files are identical except for target URL and credential source,
+- `Convex.Bundle` and file/runtime `App(...)` deployers choose the self-host
+  URL and admin key,
+- cloud-only resources are represented as skipped plan nodes rather than
+  silently ignored,
+- migrations, env vars, component installs, and HTTP routes converge against
+  the self-host target.
+
+Use the parity test as the release gate for self-host changes. If a hosted
+feature cannot map cleanly to self-host, the provider should make that gap
+visible in the plan.
+
+## Caveats
+
+- Self-host mode changes the provider surface area. It is not just a different
+  token value.
+- Production checklists should explicitly call out which backup, domain, and
+  team features no longer apply.
+- If a guide mentions hosted-only dashboard APIs, treat that as a cue to stop
+  and verify whether the example is meant for self-host at all.

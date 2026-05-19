@@ -1,0 +1,178 @@
+---
+title: Better Auth on Cloudflare with Convex
+description: Deploy Better Auth with a Cloudflare-hosted frontend and Convex backend.
+sidebar:
+  order: 14
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+This is the production recipe for the highest-level planned auth integration:
+
+- Cloudflare hosts the frontend,
+- Convex hosts the backend and generated auth routes,
+- Better Auth owns provider flows and sessions,
+- Alchemy owns the deploy-time env wiring and route registration.
+
+For the auth tier model, see [`/convex/guides/auth`](/convex/guides/auth).
+
+## Step 1: Declare Better Auth at the deploy layer
+
+Inside the `Alchemy.Stack` `Effect.gen` body, redacted secrets are passed as
+`Config.redacted("NAME")` (from `effect/Config`):
+
+```ts
+const auth = yield* Convex.Auth.BetterAuth("Auth", {
+  siteUrl: "https://app.example.com",
+  secret: Config.redacted("BETTER_AUTH_SECRET"),
+  basePath: "/api/auth",
+  providers: {
+    github: {
+      clientId: Config.redacted("GITHUB_CLIENT_ID"),
+      clientSecret: Config.redacted("GITHUB_CLIENT_SECRET"),
+    },
+  },
+});
+```
+
+This higher-level resource should generate the Better Auth instance, auth
+configuration, route registration, and provider env wiring, while still leaving
+you one user-owned seam such as `createAuthOptions(ctx)`.
+
+## Step 2: Set the required production env values
+
+The minimum deploy-time env contract is:
+
+| Name | Why it exists |
+| --- | --- |
+| `BETTER_AUTH_SECRET` | Session and token signing |
+| `SITE_URL` | Public frontend origin, such as `https://app.example.com` |
+| `CONVEX_SITE_URL` | Convex plugin/site URL used by the integration |
+| Provider client IDs and secrets | OAuth provider configuration |
+| `JWKS` when used | Explicit performance or OIDC tuning, not hidden magic |
+
+For a Cloudflare-hosted frontend, `SITE_URL` should be the public app origin,
+not the Convex site.
+
+## Step 3: Plan the generated files and routes
+
+Run:
+
+```sh
+alchemy plan
+alchemy codegen --check
+```
+
+Expected plan shape:
+
+```txt
+Components
+  + install @convex-dev/better-auth as components.betterAuth
+
+Secrets
+  + set BETTER_AUTH_SECRET      (redacted, create)
+  + set SITE_URL                https://app.example.com
+  + set CONVEX_SITE_URL         https://acme-prod.convex.site
+
+HTTP
+  + /api/auth/*                 generated Better Auth routes
+```
+
+Expected generated surfaces:
+
+- `convex/auth.config.ts`
+- `convex/betterAuth/auth.ts`
+- `convex/betterAuth/convex.config.ts` in local-component mode
+- merge-managed route registration in `convex/http.ts`
+
+## Step 4: Configure OAuth callback URLs
+
+Your OAuth provider callback URLs should match the generated Better Auth base
+path exactly.
+
+If:
+
+- `SITE_URL = https://app.example.com`
+- `basePath = /api/auth`
+- provider = GitHub
+
+then the callback URL is:
+
+```txt
+https://app.example.com/api/auth/callback/github
+```
+
+If you change `basePath`, update:
+
+- the provider callback URLs,
+- the generated route registration,
+- any frontend links that point at auth endpoints.
+
+## Step 5: Deploy the stack
+
+Run:
+
+```sh
+alchemy deploy
+```
+
+Expected result:
+
+- Better Auth component install converges,
+- routes are registered lazily under `/api/auth` by default,
+- the frontend origin and Convex site URL are both set,
+- provider secrets stay redacted in output.
+
+## Step 6: Decide cookie and domain behavior explicitly
+
+This is the part teams often gloss over and then debug in production.
+
+Use a deliberate cookie/domain plan:
+
+- if the frontend and auth routes share one host, default cookie scoping is
+  usually simpler,
+- if you need shared cookies across subdomains, set a cookie domain such as
+  `.example.com`,
+- if your auth layer uses `JWKS`, keep it explicit in configuration and docs.
+
+Do not assume Cloudflare hosting removes cookie-domain constraints. Browser
+rules still apply.
+
+## Route ownership contract
+
+The docs contract for this integration is:
+
+- generated `/api/auth/*` routes exist only when a high-level auth resource
+  explicitly owns them,
+- `convex/http.ts` is merge-managed, not replaced wholesale,
+- `convex/_alchemy/**` is Alchemy-owned,
+- Better Auth config still keeps one user-owned seam for provider options and
+  plugins.
+
+If your app already owns `/api/auth/*` by hand, resolve that ownership before
+deploying the generated routes.
+
+## Common caveats
+
+- `CONVEX_SITE_URL` is not the same thing as `SITE_URL`. One is the Convex side
+  of the integration; the other is the browser-facing app origin.
+- Better Auth user IDs stay inside the component boundary unless your app
+  mirrors them into its own user table deliberately.
+- `JWKS` and other performance-oriented auth env vars should be explicit. Do
+  not hide them behind undocumented defaults.
+- Generated auth routes are a public surface. Treat them like product API, not
+  internal scaffolding.
+
+## When to stop and ask a human
+
+Stop and escalate if:
+
+- your frontend lives on one top-level domain and auth callbacks terminate on a
+  different top-level domain,
+- your provider expects exact callback URL strings and you are not certain the
+  base path matches,
+- you already have hand-written `convex/http.ts` auth routes at `/api/auth`,
+- session cookies must survive a cross-subdomain or enterprise SSO setup you
+  have not tested,
+- you are changing `BETTER_AUTH_SECRET` in a way that could invalidate active
+  sessions without a maintenance plan.

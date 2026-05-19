@@ -1,0 +1,121 @@
+---
+title: Convex Clock and Runtime Guardrails
+description: Avoid Date.now and other runtime footguns in generated Convex handlers.
+sidebar:
+  order: 100
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Convex query caching is sensitive to time access. If a query reaches for raw
+`Date.now()` or `new Date()` inside the handler body, cache behavior becomes
+harder to reason about and harder to test. The planned DSL should make the
+safe path automatic.
+
+## The rule
+
+Queries get a deterministic `Clock` pinned to `ctx.queryStartedAt`.
+Mutations and actions do not share that caching constraint, so the strict
+rule targets queries only.
+
+Effect 4's `Clock` is a `Context.Reference`; you replace it by providing
+a Layer that supplies a fully-specified `Clock` value. The generated
+query wrapper builds one from `ctx.queryStartedAt` and adds it alongside
+the other Convex services:
+
+```ts
+import * as Clock from "effect/Clock";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+const queryClockLayer = (queryStartedAt: number) =>
+  Layer.succeed(Clock.Clock, {
+    unsafeCurrentTimeMillis: () => queryStartedAt,
+    unsafeCurrentTimeNanos: () => BigInt(queryStartedAt) * 1_000_000n,
+    currentTimeMillis: Effect.sync(() => queryStartedAt),
+    currentTimeNanos: Effect.sync(() => BigInt(queryStartedAt) * 1_000_000n),
+    sleep: (duration) => Effect.sleep(duration),
+  });
+
+export const runAlchemyQueryEffect = (ctx, args, handler) => {
+  const layer = Layer.mergeAll(
+    DatabaseReader.layer(schema, ctx.db),
+    Auth.layer(ctx.auth),
+    StorageReader.layer(ctx.storage),
+    QueryRunner.layer(ctx.runQuery),
+    queryClockLayer(ctx.queryStartedAt),
+    Layer.succeed(QueryCtx, ctx),
+    Layer.succeed(ConfigProvider.ConfigProvider, ConvexConfigProvider.make()),
+  );
+  return Effect.provide(handler(args), layer).pipe(Effect.scoped);
+};
+```
+
+In other words: query code should ask Effect for time, not the JavaScript
+runtime directly. The wrapper is the only place that knows the cache
+contract.
+
+## ESLint guardrail
+
+The planned integration ships an ESLint rule:
+
+```txt
+@alchemy/eslint-plugin-convex/no-raw-date-now-in-query
+```
+
+It flags these patterns inside `query(...)` handlers:
+
+| Disallowed in queries | Why |
+| --- | --- |
+| `Date.now()` | Ignores `ctx.queryStartedAt` |
+| `new Date()` | Same underlying footgun |
+| `performance.now()` | Another non-deterministic local clock |
+
+Mutations and actions are exempt because they are not governed by the same
+query-cache contract.
+
+## Recommended handler style
+
+```ts
+const listRecent = query({
+  args: Schema.Struct({}),
+  returns: Schema.Array(schema.tables.notes.doc),
+  handler: () =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const db = yield* DatabaseReader;
+      return yield* db.table("notes").filter((note) => note.expiresAt > now);
+    }),
+});
+```
+
+This style also makes tests cleaner because you can swap in a `TestClock`
+without editing your business logic.
+
+## Runtime guardrails nearby
+
+The Clock rule is part of a bigger runtime contract:
+
+| Guardrail | Planned behavior |
+| --- | --- |
+| Validators everywhere | Generated public functions validate args and returns by default |
+| Explicit auth | Public functions either declare `auth: "public"` or provide auth policy |
+| Thin wrappers | Business logic stays in reusable Effect code, not in giant Convex adapters |
+| Stable env | Generated exports do not appear or disappear based on runtime env values |
+| Opt-in HTTP routes | Component routes are mounted only when `httpPrefix` is set |
+
+## Commands
+
+```sh
+alchemy codegen --check
+bunx eslint .
+```
+
+## Caveats
+
+- This rule protects query determinism, not all possible time-related bugs.
+- If you really need wall-clock behavior, keep that logic outside cached query
+  semantics or move it to a mutation/action boundary.
+- Tests should use `TestClock` or a replacement `Clock` layer instead of
+  mocking `Date.now()`.

@@ -2,7 +2,7 @@
 
 > Alchemy Effect is an Infrastructure-as-Effects (IaE) framework that combines cloud infrastructure and application logic into a single, type-safe program powered by [Effect](https://effect.website). Resources are declared as Effects; bindings wire IAM, env vars, and typed SDKs in one call; deploys and runtime share the same code.
 
-This file is a navigation index for the documentation site at https://v2.alchemy.run. Every page under `/src/content/docs/` is listed below with its URL and a one-line summary, so an agent can pick the right page in one hop.
+This file is a navigation index for the documentation site at https://v2.alchemy.run. Every non-provider page under `/src/content/docs/` is listed below with its URL and a one-line summary, so an agent can pick the right page in one hop. Provider API reference pages are generated separately and summarized at the end.
 
 ## Start here
 
@@ -42,6 +42,36 @@ End-to-end AWS tutorials. Read the Lambda page first; the others bind storage an
 - [Store Records in DynamoDB](https://v2.alchemy.run/tutorial/aws/dynamodb) — Add a DynamoDB Table, bind GetItem and PutItem to your Lambda, and serve a typed key/value HTTP API backed by DynamoDB.
 - [Process DynamoDB Streams](https://v2.alchemy.run/tutorial/aws/dynamodb-streams) — Enable a DynamoDB Stream on your table and consume change records as a typed Effect Stream from the same Lambda.
 
+## Convex — planned integration
+
+Product-contract docs for the planned Convex integration: concepts, authoring modes, component wrappers, migrations, auth, storage, jobs, testing, and operational recipes.
+
+- [Convex Overview](https://v2.alchemy.run/convex) — Planned Convex API contract: Understand what Alchemy owns, what Convex owns, and how the planned Convex integration fits together.
+- [Convex Authoring Modes](https://v2.alchemy.run/convex/concepts/authoring-modes) — Planned Convex API contract: Choose between Plain Convex, Alchemy DSL + Files, Alchemy DSL + Runtime, and Confect Adapter.
+- [Convex Components](https://v2.alchemy.run/convex/concepts/components) — Planned Convex API contract: Use generic Convex component installs and promoted Effect-native component wrappers from Alchemy.
+- [Convex Generated Files](https://v2.alchemy.run/convex/concepts/generated-files) — Planned Convex API contract: Learn which Convex files Alchemy owns, which files you own, and how codegen drift is handled.
+- [Convex Security Model](https://v2.alchemy.run/convex/concepts/security-model) — Planned Convex API contract: Understand deploy credentials, runtime secrets, generated HTTP routes, and privacy boundaries for Convex on Alchemy.
+- [Convex App Quickstart](https://v2.alchemy.run/convex/guides/app-quickstart) — Planned Convex API contract: Build the recommended Alchemy Convex app using the DSL and files deployer.
+- [Convex Auth](https://v2.alchemy.run/convex/guides/auth) — Planned Convex API contract: Choose between JWT auth providers, Convex Auth, and Better Auth in Alchemy.
+- [Promoted Convex Components](https://v2.alchemy.run/convex/guides/components-promoted) — Planned Convex API contract: Use the promoted Convex component wrappers with Effect services and generated code hooks.
+- [Migrating from Confect](https://v2.alchemy.run/convex/guides/migrating-from-confect) — Planned Convex API contract: Move a Confect-authored Convex app toward the Alchemy Convex DSL.
+- [Convex Migrations](https://v2.alchemy.run/convex/guides/migrations) — Planned Convex API contract: Run online Convex migrations with expand, backfill, and contract phases.
+- [Convex Production Checklist](https://v2.alchemy.run/convex/guides/production-checklist) — Planned Convex API contract: Review production readiness for Convex deployments managed by Alchemy.
+- [Convex Clock and Runtime Guardrails](https://v2.alchemy.run/convex/guides/query-cache-clock) — Planned Convex API contract: Avoid Date.now and other runtime footguns in generated Convex handlers.
+- [Convex Quickstart](https://v2.alchemy.run/convex/guides/quickstart) — Planned Convex API contract: Use Alchemy with an existing Plain Convex app.
+- [Convex and Cloudflare R2](https://v2.alchemy.run/convex/guides/r2) — Planned Convex API contract: Install the official Convex R2 component around Alchemy-owned Cloudflare buckets.
+- [Convex Runtime Deployer](https://v2.alchemy.run/convex/guides/runtime-experimental) — Planned Convex API contract: Try the experimental runtime deployer that pushes Convex code without the Convex CLI.
+- [Self-hosted Convex](https://v2.alchemy.run/convex/guides/self-host) — Planned Convex API contract: Use Alchemy with a self-hosted Convex deployment.
+- [Testing Convex Apps](https://v2.alchemy.run/convex/guides/testing) — Planned Convex API contract: Test Alchemy-authored Convex apps with generated layers and component test helpers.
+- [Convex Typed Errors](https://v2.alchemy.run/convex/guides/typed-errors) — Planned Convex API contract: Round-trip schema-typed errors through generated Convex clients.
+- [Convex Workflows and Jobs](https://v2.alchemy.run/convex/guides/workflows-and-jobs) — Planned Convex API contract: Choose between Workpool, Workflow, Action Retrier, and Action Cache.
+- [Better Auth on Cloudflare with Convex](https://v2.alchemy.run/convex/recipes/better-auth-cloudflare) — Planned Convex API contract: Deploy Better Auth with a Cloudflare-hosted frontend and Convex backend.
+- [Dynamic Tenant Crons in Convex](https://v2.alchemy.run/convex/recipes/dynamic-tenant-crons) — Planned Convex API contract: Register and clean up tenant-specific runtime crons.
+- [Mux Video Catalog with Convex](https://v2.alchemy.run/convex/recipes/mux-video-catalog) — Planned Convex API contract: Sync Mux video data into Convex with webhooks and backfill.
+- [Recover a Failed Convex Migration](https://v2.alchemy.run/convex/recipes/recover-failed-migration) — Planned Convex API contract: Inspect, resume, cancel, retire, or replace a failed Convex migration.
+- [Rotate a Convex Secret](https://v2.alchemy.run/convex/recipes/rotate-secret) — Planned Convex API contract: Rotate a Convex environment secret without leaking values or breaking production.
+- [Zero-downtime Convex Field Rename](https://v2.alchemy.run/convex/recipes/zero-downtime-rename) — Planned Convex API contract: Rename a Convex field with expand, dual-write, backfill, verify, and contract.
+
 ## Concepts — the mental model
 
 Reference pages explaining what each primitive means and how they fit together. Read these when something in a tutorial feels magical, or before designing a new Stack.
@@ -61,6 +91,9 @@ Reference pages explaining what each primitive means and how they fit together. 
 - [Local Development](https://v2.alchemy.run/concepts/local-development) — How alchemy dev provides hot reloading, local workerd execution, and cloud-backed resources for fast iteration.
 - [Observability](https://v2.alchemy.run/concepts/observability) — Effect emits OpenTelemetry — ship traces, metrics, and logs to Axiom, Datadog, CloudWatch, or any OTLP endpoint. Declare dashboards and alarms in code.
 - [Testing](https://v2.alchemy.run/concepts/testing) — Reference for alchemy/Test — every helper, hook, and option exposed by Test.make for Bun and Vitest.
+- [Action](https://v2.alchemy.run/concepts/action) — A node in the dependency graph that runs an Effect during apply when its inputs change.
+- [References](https://v2.alchemy.run/concepts/references) — Read values out of another stack or stage at plan time — typed, lazy, and resolved from persisted state.
+- [Secrets and Variables](https://v2.alchemy.run/concepts/secrets) — Bind a value into a deploy target's env and get back an accessor that reads it at runtime.
 
 ## Guides — task-oriented
 
@@ -82,10 +115,13 @@ Standalone how-to pages. Each solves a specific problem; read in any order.
 
 ## Blog
 
-- [What's new in beta.35](https://v2.alchemy.run/blog/2026-05-08-beta-35) — A Stream-shaped Effect consumer for Cloudflare Queues, R2 bucket custom domains, non-string env bindings on Workers, Neon logical replication, and a round of CLI quality-of-life.
-- [What's new in beta.36](https://v2.alchemy.run/blog/2026-05-09-beta-36) — Cloudflare Images binding, Hyperdrive as a Worker binding, R2 object lifecycle rules, and a dev-mode networking fix.
+- [alchemy@2.0.0-beta.35](https://v2.alchemy.run/blog/2026-05-08-beta-35) — A Stream-shaped Effect consumer for Cloudflare Queues, R2 bucket custom domains, non-string env bindings on Workers, Neon logical replication, and a round of CLI quality-of-life.
+- [alchemy@2.0.0-beta.36](https://v2.alchemy.run/blog/2026-05-09-beta-36) — Cloudflare Images binding, Hyperdrive as a Worker binding, R2 object lifecycle rules, and a dev-mode networking fix.
 - [Secrets and Variables](https://v2.alchemy.run/blog/2026-05-11-secrets-and-variables) — Bind a value into your deploy target's env and get back a typed runtime accessor — the same one-liner works for Cloudflare Workers and AWS Lambda.
-- [What's new in beta.37](https://v2.alchemy.run/blog/2026-05-12-beta-37) — Cross-stack and cross-stage references, fully-typed Worker-to-Worker bindings, Workflows with typed I/O, `Alchemy.Secret` / `Alchemy.Variable`, cron triggers, an Analytics Engine binding, and R2 buckets that finally empty themselves on destroy.
+- [alchemy@2.0.0-beta.37](https://v2.alchemy.run/blog/2026-05-12-beta-37) — Cross-stack and cross-stage references, fully-typed Worker-to-Worker bindings, Workflows with typed I/O, `Alchemy.Secret` / `Alchemy.Variable`, cron triggers, an Analytics Engine binding, and R2 buckets that finally empty themselves on destroy.
+- [alchemy@2.0.0-beta.38](https://v2.alchemy.run/blog/2026-05-13-beta-38) — Cloudflare Email Routing and the `send_email` Worker binding, a new `Action` plan node for arbitrary Effects that run during apply, a leaner Neon provider on the typed `@distilled.cloud/neon` SDK, and a transport-error retry fix.
+- [alchemy@2.0.0-beta.39](https://v2.alchemy.run/blog/2026-05-13-beta-39) — A small, high-impact fix release — `VITE_*` env props are now inlined into the client bundle, the Cloudflare Worker HTTP adapter runs handlers through Effect's standard HTTP lifecycle (unblocking `RpcServer.toHttpEffect`), and the `SendEmail` binding from beta.38 is now wired into Worker binding inference.
+- [alchemy@2.0.0-beta.40](https://v2.alchemy.run/blog/2026-05-15-beta-40) — Cloudflare local dev gains a real Vite dev server (HMR, SSR, client + worker in one process), AiGateway stops reporting spurious updates on every deploy, the Worker HTTP server returns generic 500s while logging the full Cause server-side, and a handful of fixes around entrypoint generation, container startup, and the dev lockfile.
 
 ## Providers — auto-generated API reference
 

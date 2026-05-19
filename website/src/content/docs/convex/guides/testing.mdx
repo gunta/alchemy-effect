@@ -1,0 +1,151 @@
+---
+title: Testing Convex Apps
+description: Test Alchemy-authored Convex apps with generated layers and component test helpers.
+sidebar:
+  order: 102
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Testing is one of the strongest reasons to keep the Convex integration
+Effect-native. The planned contract is that the same app bundle used for
+production deploys should also power the main test surface.
+
+There are two test surfaces. App-level tests exercise the bundled Convex
+app in-process. Provider-resource tests deploy a real `Alchemy.Stack` and
+verify lifecycle behavior against the live Convex API.
+
+## App-level tests (the main entrypoint)
+
+`TestConvex` is planned as an Effect service. `TestConvex.layer(app)`
+returns a `Layer` that bundles `app` through the same
+`AppBundler.bundleFromApp` path that Alchemy DSL + Runtime uses in
+production, then feeds the bundle into `convex-test`. Tests `yield*` the
+service after providing the layer:
+
+```ts
+import * as Effect from "effect/Effect";
+import { TestConvex } from "@alchemy/convex-dsl/test";
+import app from "../src/convex/app";
+
+const TestBackendLive = TestConvex.layer(app);
+
+test("create + list", () =>
+  Effect.gen(function* () {
+    const t = yield* TestConvex;
+    const id = yield* t.run("notes:create", { text: "hello" });
+    const list = yield* t.run("notes:list", {});
+    expect(list).toContainEqual({ _id: id, text: "hello" });
+  }).pipe(Effect.provide(TestBackendLive)));
+```
+
+Tests should exercise the real generated code, not a parallel
+hand-written adapter.
+
+## Component test helpers
+
+Some promoted integrations need component test packages. Migrations are the
+main example:
+
+```ts
+import migrationsTest from "@convex-dev/migrations/test";
+
+export const TestBackendLive = TestConvex.layer(app, {
+  components: [migrationsTest],
+});
+```
+
+When `defineMigrations(...)` is present, the plan is for
+`TestConvex.layer(app)` to auto-register the migrations helper unless you
+override component registration yourself.
+
+## Provider-resource tests
+
+The planned Convex provider follows the same harness that AWS and
+Cloudflare resources use — `Test.make({ providers })` + `beforeAll(deploy(Stack))`.
+Use this for `Convex.Project`, `Convex.Deployment`,
+`Convex.EnvironmentVariable`, `Convex.Bundle`, and any binding tests:
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Convex from "@alchemy/convex";
+import * as Test from "alchemy/Test/Vitest";
+import * as Effect from "effect/Effect";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Convex.providers(),
+});
+
+const Stack = Alchemy.Stack(
+  "ConvexProviderTestStack",
+  { providers: Convex.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const project = yield* Convex.Project("Project", { slug: "alchemy-test" });
+    const deployment = yield* Convex.Deployment("Dev", { project, type: "dev" });
+    return { url: deployment.deploymentUrl.as<string>() };
+  }),
+);
+
+const stack = beforeAll(deploy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
+
+test(
+  "deployment exposes a workers.dev-style URL",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    expect(url).toMatch(/^https:\/\//);
+  }),
+  { timeout: 180_000 },
+);
+```
+
+`Test.make` returns the wrapped vitest helpers. `beforeAll(deploy(Stack))`
+deploys once for the file and exposes the stack outputs to every `test`.
+`destroy` cleans up unless `NO_DESTROY=1` is set, matching the pattern
+in [`AiGateway.test.ts`](https://github.com/Distilled-Cloud/alchemy-effect/blob/main/packages/alchemy/test/Cloudflare/AiGateway/AiGateway.test.ts).
+
+## What should be tested
+
+| Category | What to assert |
+| --- | --- |
+| DSL codegen snapshots | Exact generated files, stable ordering, and drift checks |
+| Schema compiler | Compileable shapes succeed and forbidden shapes fail cleanly |
+| Typed errors | Domain failures round-trip without becoming string payloads |
+| HTTP adapter | `convexHttpAction(...)` preserves Effect HttpApi semantics |
+| Component wrappers | Runtime layer behavior matches generated refs and test packages |
+| Secrets | Redacted values never leak into snapshots, logs, or generated source |
+
+## Layer substitution
+
+The design explicitly calls for replacement-friendly services. These should be
+swappable in tests without changing handler or resource code:
+
+| Service boundary | Why it matters |
+| --- | --- |
+| SDK and HTTP clients | Unit-test provider resources without live Convex APIs |
+| CLI wrapper | Test deploy orchestration without shelling out |
+| Local backend / deployer services | Exercise files/runtime deployers deterministically |
+| Component runtime layers | Test app behavior without hand-rolled mocks |
+
+## Commands
+
+```sh
+bun test
+alchemy codegen --check
+```
+
+## Testing philosophy
+
+- Provider resources still need create -> update -> read -> delete coverage.
+- Adoption and unowned-resource behavior should be tested explicitly.
+- Worker fixture tests should verify host bindings against a real Convex deployment.
+- Byte-equivalence for the runtime deployer remains the strongest drift check.
+
+## Caveats
+
+- `TestConvex.layer(app)` is meant to prove the generated app bundle, not to
+  replace end-to-end tests.
+- If a component has its own test package, use it. Recreating upstream helper
+  behavior by hand usually hides real integration gaps.
+- Secret handling belongs in tests too. A green test suite that leaks redacted
+  values into snapshots is not actually green.

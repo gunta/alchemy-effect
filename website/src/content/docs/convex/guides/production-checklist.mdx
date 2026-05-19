@@ -1,0 +1,170 @@
+---
+title: Convex Production Checklist
+description: Review production readiness for Convex deployments managed by Alchemy.
+sidebar:
+  order: 103
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Use this page as the final preflight before a production Convex deploy managed
+by Alchemy. The goal is not to create ceremony for its own sake. The goal is
+to catch the specific failure modes this integration introduces: generated
+files, component installs, migration phases, auth routes, and deploy-time
+secrets.
+
+## 1. Credentials and target
+
+- Confirm which mode you are deploying: Plain Convex, Alchemy DSL + Files,
+  Alchemy DSL + Runtime, or Confect Adapter.
+- Confirm whether the target is hosted Convex or self-hosted Convex.
+- Verify the deploy-time credential source before plan or deploy:
+
+```sh
+alchemy plan
+alchemy deploy
+```
+
+Hosted mode normally means team token, OAuth token, or deploy key. Self-host
+mode means `CONVEX_SELF_HOSTED_URL` plus `CONVEX_SELF_HOSTED_ADMIN_KEY`.
+
+## 2. Generated-file drift
+
+Run the drift check before production:
+
+```sh
+alchemy codegen --check
+```
+
+If this fails, stop and resolve the mismatch before deploy. The planned check
+mode should print exact drift instead of silently rewriting files:
+
+```txt
+convex/_alchemy/schema.ts drifted
+  expected: generated from alchemy.run.ts
+  actual: manual edit detected
+
+Run: alchemy codegen
+```
+
+## 3. Secrets and environment variables
+
+Review deploy-time env like application configuration, not like ad hoc shell
+state.
+
+| Surface | What to verify |
+| --- | --- |
+| Deployment secrets | Stored as redacted resources, not hard-coded in generated code |
+| Plain env values | Correct current domain, endpoint, bucket, and feature flag values |
+| Auth env | `BETTER_AUTH_SECRET`, `SITE_URL`, `CONVEX_SITE_URL`, provider IDs and secrets |
+| Integration env | R2, Mux, AI provider, and any component-specific secrets |
+
+Example plan shape:
+
+```txt
+Secrets
+  + set BETTER_AUTH_SECRET      (redacted, create)
+  + set SITE_URL                https://app.example.com
+  + set CONVEX_SITE_URL         https://acme-prod.convex.site
+  + set R2_ACCESS_KEY_ID        (redacted, update)
+  + set R2_SECRET_ACCESS_KEY    (redacted, no change)
+```
+
+## 4. Public route ownership
+
+Generated public routes should be explicit:
+
+| Route type | What to verify |
+| --- | --- |
+| Better Auth | Route base path, callback URLs, cookie domain, optional JWKS |
+| Mux webhook | Endpoint, signing secret, and verification path |
+| Component HTTP routes | Only mounted when `httpPrefix` is intentional |
+| Upload or sync routes | App auth and signed-URL expiry behavior documented |
+
+Do not treat generated routes as harmless defaults. If a public route exists,
+make sure a high-level resource actually owns it.
+
+## 5. Component installs
+
+Review the install set like runtime dependencies, not like background noise.
+
+| Check | Why it matters |
+| --- | --- |
+| Wrapper version vs installed component version | Drift should be explicit in plan output |
+| Tier A components | Expect full guide coverage and test helper support |
+| Generic components | Confirm you are using the escape hatch intentionally |
+| External-service components | Check webhook and provider-secret setup before deploy |
+
+Expected plan grouping:
+
+```txt
+Components
+  + install @convex-dev/migrations as components.migrations
+  + install @convex-dev/better-auth as components.betterAuth
+  + install @convex-dev/r2 as components.r2
+  + install @convex-dev/rate-limiter as components.rateLimiter
+```
+
+## 6. Migration gates
+
+If the deploy includes `defineMigrations(...)`, review the phase carefully.
+
+| Phase | Production expectation |
+| --- | --- |
+| `manual` | Safest default; deploy functions and run backfill commands intentionally |
+| `expand` | Okay before a live backfill begins |
+| `backfill` | Decide whether `run: "manual"`, `start`, or `wait` is appropriate |
+| `contract` | Should remain blocked until verify is clean and contract is explicitly allowed |
+
+Typical follow-up commands:
+
+```sh
+convex run migrations:runPending '{}'
+convex run migrations:verifyUserDisplayName '{}'
+```
+
+## 7. Logs, privacy, and redaction
+
+Verify that:
+
+- secret env values are redacted in state and session output,
+- generated code does not log auth headers, provider tokens, or migration
+  document bodies,
+- deploy-time credentials never enter runtime bundles,
+- component env and auth callbacks do not accidentally expose sensitive values.
+
+## 8. Backup and rollback posture
+
+| Situation | What to decide before deploy |
+| --- | --- |
+| Hosted Convex | Whether backup and restore surfaces are in place and current |
+| Self-host | What your backup mechanism is, since cloud-only dashboard resources are skipped |
+| Dual-write migration | How long the old field remains readable during rollback |
+| Auth rollout | Whether old and new callback URLs both need to work temporarily |
+| External integrations | Whether webhook replay or metadata repair is available |
+
+Rollback notes:
+
+- Prefer expand-first migrations because they preserve old readers and writers.
+- Avoid contract deploys in the same breath as a fresh backfill unless verify
+  is unquestionably clean.
+- For Better Auth, rotating secrets may require a staged deployment where both
+  old and new provider settings are accepted briefly.
+
+## 9. Final go/no-go
+
+Ship when all of these are true:
+
+- `alchemy codegen --check` is clean.
+- `alchemy plan` reads like the intended operational checklist.
+- Generated public routes are intentional and reviewed.
+- Required secrets exist and are current.
+- Migration phase matches the rollout you actually want.
+- Component version drift, if any, is understood.
+
+Stop and ask a human when any of these are true:
+
+- a contract step is blocked but someone wants to force it,
+- a generated route exists and no owner can explain why,
+- a secret rotation changes both auth and webhook surfaces at once,
+- self-host mode still appears to plan hosted-only dashboard resources.

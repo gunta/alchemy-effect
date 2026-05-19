@@ -1,0 +1,114 @@
+---
+title: Convex Typed Errors
+description: Round-trip schema-typed errors through generated Convex clients.
+sidebar:
+  order: 99
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+The planned Convex DSL should preserve typed errors all the way from a
+handler's `Effect.fail(...)` to the generated client surface. This matters for
+application logic, testability, and good UX. A missing document should not
+arrive at the client as "some string in `ConvexError.data`" if the schema
+already knows exactly what failed.
+
+## Define an error with Schema
+
+Effect 4's tagged-error builder is `Schema.TaggedErrorClass`. The first
+generic argument is the class type and the call signature is
+`TaggedErrorClass<Self>()(tag, fields)`:
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+export class NoteNotFound extends Schema.TaggedErrorClass<NoteNotFound>()(
+  "NoteNotFound",
+  { noteId: schema.tables.notes.id },
+) {}
+
+export const getOrFail = query({
+  args: Schema.Struct({ noteId: schema.tables.notes.id }),
+  returns: schema.tables.notes.doc,
+  error: NoteNotFound,
+  handler: ({ noteId }) =>
+    Effect.gen(function* () {
+      const db = yield* DatabaseReader;
+      const note = yield* db.table("notes").get(noteId);
+      if (note === null) {
+        return yield* Effect.fail(new NoteNotFound({ noteId }));
+      }
+      return note;
+    }),
+});
+```
+
+The key point is the explicit `error:` declaration. That gives the code
+generator a real contract for encoding and decoding failures.
+
+## Planned wrapper behavior
+
+| Step | Behavior |
+| --- | --- |
+| Args | Decode with the declared `args` schema |
+| Handler success | Encode with `returns` |
+| Handler failure matching `error` | Encode into `ConvexError.data` in a structured form |
+| Unexpected failure | Surface as a developer error or defect, not as a fake typed domain error |
+
+This is the behavior the generated wrappers should implement for queries,
+mutations, and actions.
+
+## Client result shapes
+
+The exact return type depends on the client surface:
+
+| Client | Result shape |
+| --- | --- |
+| React query | Query result with typed success and domain error channels |
+| React mutation/action | Promise-based result that returns success or typed domain error |
+| Effect JS client | Effect-based result with domain, transport, and parse failures |
+| Test service | Effect-based result with domain and parse failures |
+
+Exact planned signatures:
+
+```ts
+QueryResult<A, E>                              // React query (non-Effect)
+Promise<Either<A, E>>                          // React mutation/action (non-Effect)
+Effect<A, E | TransportError | ParseError>     // Effect JS client
+Effect<A, E | ParseError>                      // TestConvex service
+```
+
+The Promise/Either shape is intentional only for the React (non-Effect)
+mutation hook surface. Server-side and Effect-aware client code stays in
+the `Effect<A, E>` channel — never wrap an Effect-returning planner in
+`Promise.then(...)`. That is deliberate: UI code, server-side Effect code,
+and tests should each get the shape that makes failures easiest to handle
+without string parsing.
+
+## Why this matters
+
+Typed errors help with:
+
+| Benefit | Example |
+| --- | --- |
+| Safer UI branching | Show a "note missing" state without treating it like transport failure |
+| Better tests | Assert on a tagged error value instead of snapshotting a thrown string |
+| Cleaner APIs | Keep domain errors separate from provider, parse, or transport errors |
+| Future wrappers | Promoted components can expose the same `Schema.TaggedErrorClass` model |
+
+## Commands
+
+```sh
+alchemy codegen --check
+alchemy deploy
+```
+
+## Caveats
+
+- Typed errors cover expected domain failures. They should not be used to hide
+  defects or infrastructure failures.
+- If a handler does not declare `error`, callers should not expect a typed
+  domain failure surface.
+- Promoted component services should also fail with tagged errors rather than
+  inventing stringly typed error payloads.

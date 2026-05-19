@@ -1,0 +1,249 @@
+---
+title: Convex Quickstart
+description: Use Alchemy with an existing Plain Convex app.
+sidebar:
+  order: 90
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+This guide is for **Plain Convex**. Keep your existing
+`convex/` directory, your existing Convex mental model, and your
+existing `convex deploy` workflow. Alchemy manages the project,
+deployment, environment variables, and surrounding infrastructure,
+then bundles the app from the files you already own.
+
+If you are starting a brand-new app, use
+[Convex App Quickstart](/convex/guides/app-quickstart) instead.
+That is the recommended **Alchemy DSL + Files** golden path.
+For a side-by-side of all four authoring modes, see
+[Authoring Modes](/convex/concepts/authoring-modes). For the full
+ownership model, start with [Convex Overview](/convex).
+
+## What Plain Convex owns
+
+With Plain Convex:
+
+- You keep authoring `convex/*.ts` as you do today.
+- Alchemy manages Convex project and deployment resources.
+- Alchemy can manage Convex environment variables as resources.
+- Alchemy deploys your app by pointing `Convex.Bundle` at `./convex`.
+- You can compose Convex with the rest of your stack in one
+  `alchemy.run.ts`.
+
+This is the right fit when you already have a Convex app in
+production and want Alchemy to manage infrastructure around it
+without forcing a DSL migration on day one.
+
+## Prerequisites
+
+- A working Convex app under `./convex`
+- Bun installed
+- An Alchemy stack entrypoint such as `alchemy.run.ts`
+- Convex credentials that let Alchemy create or select a project and
+  deployment
+
+The examples below use **planned API names** from the design spec.
+They are intentionally concrete so implementation can follow the docs.
+
+## Install the planned packages
+
+```sh
+bun add alchemy convex effect @alchemy/convex
+```
+
+Plain Convex uses the base Convex integration package. There is no DSL,
+no generated file sink, and no runtime deploy protocol here.
+
+## Start from your existing `convex/` app
+
+Assume you already have something like this:
+
+```txt
+.
+├── alchemy.run.ts
+├── convex
+│   ├── schema.ts
+│   ├── notes.ts
+│   └── http.ts
+└── package.json
+```
+
+Alchemy treats `convex/` as **user-owned source** in Plain Convex. It
+reads from that directory and deploys it, but it does not generate
+over it.
+
+## Create the Convex project and deployment
+
+The core pattern is:
+
+1. Create or look up a Convex project.
+2. Create the target deployment for the current stage.
+3. Add environment variables as resources.
+4. Bundle the existing `convex/` directory into that deployment.
+
+```ts
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Convex from "@alchemy/convex";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "NotesApp",
+  {
+    providers: Layer.mergeAll(
+      Convex.providers(),
+      Cloudflare.providers(),
+    ),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const project = yield* Convex.Project("Project", {
+      slug: "notes-app",
+    });
+
+    const deployment = yield* Convex.Deployment("Dev", {
+      project,
+      type: "dev",
+    });
+
+    yield* Convex.EnvironmentVariable("SiteUrl", {
+      deployment,
+      name: "SITE_URL",
+      value: "http://localhost:3000",
+    });
+
+    yield* Convex.EnvironmentVariable("DatabaseUrl", {
+      deployment,
+      name: "DATABASE_URL",
+      value: Config.redacted("DATABASE_URL"),
+    });
+
+    const code = yield* Convex.Bundle("Code", {
+      deployment,
+      source: "./convex",
+    });
+
+    const assets = yield* Cloudflare.R2Bucket("Assets", {});
+
+    const worker = yield* Cloudflare.Worker("Web", {
+      bindings: {
+        CONVEX: deployment,
+        ASSETS: assets,
+      },
+      env: {
+        CONVEX_URL: deployment.deploymentUrl,
+      },
+    });
+
+    return {
+      deploymentUrl: deployment.deploymentUrl.as<string>(),
+      dashboardUrl: project.projectUrl.as<string>(),
+      bundleHash: code.bundleHash.as<string>(),
+      workerUrl: worker.url.as<string>(),
+    };
+  }),
+);
+```
+
+Stack outputs are `Output<T>` accessors — call `.as<T>()` to give the
+return type a stable concrete shape that downstream tests and tooling
+can rely on. The same pattern is used in the [AiGateway binding test](https://github.com/Distilled-Cloud/alchemy-effect/blob/main/packages/alchemy/test/Cloudflare/AiGateway/AiGateway.test.ts).
+
+Two details matter here:
+
+- `Convex.Bundle` is the deployment step for your existing files.
+- `Convex.EnvironmentVariable` makes app config visible in plans,
+  state, and reviews instead of hiding it in an out-of-band dashboard
+  step.
+
+## Why this is useful even without the DSL
+
+Plain Convex is deliberately boring. That is its strength.
+
+- You can adopt Alchemy without rewriting handlers.
+- You can deploy Convex together with Workers, buckets, queues, and
+  secrets in one stack.
+- You can standardize stage, plan, review, and destroy workflows
+  across your infrastructure.
+- You can migrate selectively later: keep some files Plain Convex and
+  move new surfaces to the DSL when it is worth it.
+
+The design spec explicitly allows this mixed posture. Plain Convex is the
+lowest-risk adoption path.
+
+## Deploy
+
+Run the normal Alchemy deploy:
+
+```sh
+bun alchemy deploy
+```
+
+Expected shape of the first deploy:
+
+- Alchemy creates or adopts the Convex project.
+- Alchemy creates the target deployment.
+- Alchemy applies any `Convex.EnvironmentVariable` resources.
+- `Convex.Bundle` runs a normal Convex code deploy from `./convex`.
+- The rest of the stack deploys in dependency order.
+
+On later deploys, only changed resources should update. If your
+Convex code is unchanged, `Convex.Bundle` should no-op.
+
+## Plan before deploy
+
+For teams that want reviewable infrastructure changes, run a plan
+first:
+
+```sh
+bun alchemy plan
+```
+
+The intended UX is that Convex changes appear next to the rest of the
+stack instead of being hidden behind a separate CLI run. In practice,
+that means you can review:
+
+- new or changed environment variables
+- bundle updates
+- attached cloud resources
+- stage-specific differences
+
+from one plan surface.
+
+## Destroy
+
+When you want to tear down the environment, use the normal Alchemy
+destroy flow:
+
+```sh
+bun alchemy destroy
+```
+
+The intended lifecycle is still resource-oriented:
+
+- delete dependent cloud resources first
+- delete the Convex deployment resources they rely on
+- remove only what belongs to this stack and stage
+
+For production systems, use stage separation and review just as you
+would for any other Alchemy stack.
+
+## When to move to Alchemy DSL + Files
+
+Plain Convex is a great steady state if your team likes raw Convex files.
+Move to Alchemy DSL + Files when you want:
+
+- Effect Schema as the source of truth for database and function I/O
+- generated typed refs and typed services
+- migrations modeled as part of the app contract
+- promoted component wrappers such as Better Auth, R2, and
+  RateLimiter
+- a single app declaration that explains schema, groups, HTTP routes,
+  components, and migrations together
+
+That path starts at
+[Convex App Quickstart](/convex/guides/app-quickstart).

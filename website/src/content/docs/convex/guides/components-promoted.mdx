@@ -1,0 +1,148 @@
+---
+title: Promoted Convex Components
+description: Use the promoted Convex component wrappers with Effect services and generated code hooks.
+sidebar:
+  order: 96
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Promoted wrappers exist for the components that become materially better when
+Alchemy adds typed services, generated files, or deploy-time safety. Every
+promoted wrapper still builds on the same generic substrate, so you can start
+generic and adopt a richer wrapper later without changing the ownership model.
+
+## Start with the generic substrate
+
+When a component is not promoted yet, or when you want to use a new upstream
+feature immediately, use the generic install surface first:
+
+```ts
+const geospatial = yield* Convex.Component("geospatial", {
+  source: {
+    package: "@convex-dev/geospatial",
+    version: "^0.2.1",
+    configExport: "@convex-dev/geospatial/convex.config.js",
+  },
+  name: "geospatial",
+  test: "@convex-dev/geospatial/test",
+});
+```
+
+Supported planned props (matches the [components concept](/convex/concepts/components#planned-resource-shape)):
+
+| Prop | Meaning |
+| --- | --- |
+| `source` | npm package or local component folder |
+| `name` | Install key under `components.<name>` |
+| `env` | Typed plain or secret values passed into `app.use(component, { env })` |
+| `httpPrefix` | Mount point for public component routes; omitted means no public HTTP routes |
+| `options` | Raw install options for new upstream features |
+| `test` | Optional component test entrypoint |
+
+Use the generic route whenever you need the escape hatch.
+
+## What promotion adds
+
+A promoted wrapper adds three things on top of `Convex.Component(...)`:
+
+1. Typed install metadata such as a tested package range and default name.
+2. An app-side `Context.Service` layer with `Effect`-returning methods.
+3. Codegen hooks for imports, helper modules, route registration, or tests.
+
+The runtime layer is the app boundary. It can depend on generated refs,
+`Auth`, scheduler services, storage, or env, but it must not close over
+management credentials or provider SDK clients.
+
+## Maturity tiers
+
+| Tier | Meaning | Components |
+| --- | --- | --- |
+| A - flagship | Detailed guide, generated code, test helper integration, Effect service, example app coverage | Migrations, Better Auth, R2, RateLimiter, Workflow, Workpool |
+| B - typed client | Generic install plus Effect service and tests, but usually no full example app | Aggregate, ShardedCounter, Geospatial, Crons, ActionCache, ActionRetrier, Agent, Authz |
+| C - integration bridge | Needs external services, webhooks, or scaffold behavior | Mux, NeutralCost |
+| D - generic | Works through `Convex.Component` only until promoted later | Any unsupported component |
+
+## Promoted catalog
+
+Versions below come from the design spec snapshot dated 2026-05-19.
+
+| Wrapper | Package | Default install name | Shape |
+| --- | --- | --- | --- |
+| `Components.Migrations` / `defineMigrations` | `@convex-dev/migrations` | `migrations` | Expand, backfill, and contract rollouts |
+| `Components.Workflow` | `@convex-dev/workflow@0.3.12` | `workflow` | Durable workflow run control |
+| `Components.Workpool` | `@convex-dev/workpool@0.4.6` | `workpool` | Bounded parallelism job queue |
+| `Components.ActionRetrier` | `@convex-dev/action-retrier@0.3.0` | `actionRetrier` | Idempotent action retry |
+| `Components.ActionCache` | `@convex-dev/action-cache@0.3.0` | `actionCache` | Typed action-result cache |
+| `Components.R2` | `@convex-dev/r2@0.10.1` | `r2` | Official R2 component wired to Alchemy-owned Cloudflare buckets |
+| `Components.RateLimiter` | `@convex-dev/rate-limiter@0.3.2` | `rateLimiter` | Token bucket and fixed-window limits |
+| `Components.Aggregate` | `@convex-dev/aggregate@0.2.1` | `aggregate` | Ordered aggregates and trigger helpers |
+| `Components.ShardedCounter` | `@convex-dev/sharded-counter@0.2.0` | `shardedCounter` | High-throughput counters |
+| `Components.Geospatial` | `@convex-dev/geospatial@0.2.1` | `geospatial` | S2-backed point indexes |
+| `Components.Crons` | `@convex-dev/crons@0.2.0` | `crons` | Dynamic user-space cron registration |
+| `Components.BetterAuth` | `@convex-dev/better-auth@0.12.2` | `betterAuth` | Auth component and generated routes |
+| `Components.Authz` | `@djpanda/convex-authz@2.4.0` | `authz` | RBAC, ABAC, and ReBAC helpers |
+| `Components.Mux` | `@mux/convex@0.3.2` + `@mux/convex-mux-init@0.2.2` | `mux` | Mux webhook, HTTP, and backfill bridge |
+| `Components.NeutralCost` | `neutral-cost@0.2.2` | `neutralCost` | AI cost recording and reports |
+
+## Example: a promoted runtime layer
+
+The promoted wrappers expose `Effect` services rather than raw
+`ctx.runMutation` calls:
+
+```ts
+import { Components } from "@alchemy/convex-dsl";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+
+const RateLimiterLive = Components.RateLimiter.layer("rateLimiter", {
+  source: { package: "@convex-dev/rate-limiter", version: "^0.3.2" },
+  limits: {
+    failedLogins: {
+      kind: "fixed window",
+      rate: 5,
+      period: Duration.minutes(15),
+      shards: 4,
+    },
+  },
+});
+
+const auth = defineGroup("auth", {
+  signIn: mutation({
+    args: SignInArgs,
+    handler: (args) =>
+      Effect.gen(function* () {
+        const limiter = yield* Components.RateLimiter;
+        yield* limiter.limit("failedLogins", { key: args.email, throws: true });
+        return yield* signInImpl(args);
+      }).pipe(Effect.provide(RateLimiterLive)),
+  }),
+});
+```
+
+## HTTP, env, and tests
+
+| Concern | Planned rule |
+| --- | --- |
+| Component env | Declare typed env in `convex.config.ts` when upstream supports it |
+| Public HTTP routes | Mounted only when `httpPrefix` is set, or when a high-level wrapper explicitly owns the route |
+| Test helpers | `TestConvex.layer(app)` should auto-register promoted component test packages where possible |
+| IDs across the boundary | Treat component IDs as strings unless the wrapper can prove a safer branded mapping |
+
+## Commands
+
+```sh
+alchemy plan
+alchemy deploy
+alchemy codegen --check
+```
+
+## Caveats
+
+- Promotion is a compatibility promise, not a claim that every upstream
+  package has identical support depth.
+- The generic component substrate is the escape hatch when a promoted wrapper
+  lags a new upstream release.
+- If an integration depends on external webhooks or secrets, expect the docs
+  to keep at least one explicit user-owned seam instead of hiding everything
+  behind a single magic resource.

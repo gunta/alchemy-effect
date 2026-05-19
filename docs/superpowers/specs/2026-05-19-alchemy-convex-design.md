@@ -8,11 +8,11 @@
 
 ## 1. Executive Summary
 
-Ship a comprehensive Convex integration for Alchemy v2 across **5 npm packages**, exposing **4 authoring flavors**, in a single PR. Every Convex user — whether they want pure cloud lifecycle management around their existing Convex code, Effect-Schema-driven authoring that generates Convex files, fully native Effect-on-Convex authoring with no on-disk Convex files, or Confect — picks the flavor that suits them and installs only the packages they need.
+Ship a comprehensive Convex integration for Alchemy v2 across **5 npm packages**, exposing **4 authoring modes**, in a single PR. Every Convex user — whether they want pure cloud lifecycle management around their existing Convex code, Effect-Schema-driven authoring that generates Convex files, fully native Effect-on-Convex authoring with no on-disk Convex files, or Confect — picks the mode that suits them and installs only the packages they need.
 
-The architecture is composable. The packages share a deployer-agnostic DSL, a deployer-agnostic codegen, and a deployer-agnostic IaC core. Each flavor is a thin composition over these primitives. New flavors can be added without modifying existing ones.
+The architecture is composable. The packages share a deployer-agnostic DSL, a deployer-agnostic codegen, and a deployer-agnostic IaC core. Each mode is a thin composition over these primitives. New modes can be added without modifying existing ones.
 
-To make this scope sustainable, the spec replaces six structural anti-patterns from prior drafts with concrete, enforced solutions, and grounds the most ambitious flavor (Flavor 3, the fully-native runtime) in a careful reading of Convex's own CLI source.
+To make this scope sustainable, the spec replaces six structural anti-patterns from prior drafts with concrete, enforced solutions, and grounds the most ambitious mode (Alchemy DSL + Runtime, the fully-native runtime) in a careful reading of Convex's own CLI source.
 
 ## 2. Context and Motivation
 
@@ -23,29 +23,29 @@ Two prior design drafts attempted to solve this and each chose one position:
 - The first draft (provider-first) used `/* ALCHEMY:BEGIN ... */` comment markers to edit user-owned files in `convex/`, shipped 30 typed component wrappers most of which were `Schema.Unknown` stubs, and lumped cloud-state management with code generation into a single mental model.
 - The second draft (native-app-first) underspecified the Effect-Schema → Convex validator compiler, required users to rebrand `convex/` as a generated directory while moving authoring to `src/convex/`, hand-waved the Effect Platform `HttpApi` → Convex `httpAction` adapter, and left the `Date.now()` query-cache footgun acknowledged but unsolved.
 
-This spec recognizes both as the same kind of mistake: each picked one authoring model and pretended the other use cases didn't exist. The right answer is **multiple supported flavors with shared primitives**, each first-class but with a clear default and clear trade-offs.
+This spec recognizes both as the same kind of mistake: each picked one authoring model and pretended the other use cases didn't exist. The right answer is **multiple supported modes with shared primitives**, each first-class but with a clear default and clear trade-offs.
 
 ## 3. Decision
 
-**Build 5 packages exposing 4 flavors, in one PR, with every anti-pattern replaced.**
+**Build 5 packages exposing 4 modes, in one PR, with every anti-pattern replaced.**
 
 - **`@alchemy/convex`** — IaC core. Always required. Owns Project/Deployment/EnvironmentVariable/LogStream/etc., the Bundle subprocess wrapper, and the Worker binding.
-- **`@alchemy/convex-dsl`** — Optional. Effect-Schema-driven app DSL (`defineApp`, `defineSchema`, `defineMigrations`, `query`, `mutation`, generated services, codegen, HTTP API adapter, ESLint plugin). Used by Flavors 2 and 3.
-- **`@alchemy/convex-files`** — Optional (Flavor 2). Deployer that writes the DSL's codegen output to `convex/_alchemy/` and runs `convex deploy`.
-- **`@alchemy/convex-runtime`** — Optional, experimental (Flavor 3). Deployer that bundles the app in-memory and pushes directly to Convex's `deploy2` protocol. No files on disk.
-- **`@alchemy/convex-confect`** — Optional (Flavor 4). Adapter for users on Confect.
+- **`@alchemy/convex-dsl`** — Optional. Effect-Schema-driven app DSL (`defineApp`, `defineSchema`, `defineMigrations`, `query`, `mutation`, generated services, codegen, HTTP API adapter, ESLint plugin). Used by Alchemy DSL + Files and Alchemy DSL + Runtime.
+- **`@alchemy/convex-files`** — Optional (Alchemy DSL + Files). Deployer that writes the DSL's codegen output to `convex/_alchemy/` and runs `convex deploy`.
+- **`@alchemy/convex-runtime`** — Optional, experimental (Alchemy DSL + Runtime). Deployer that bundles the app in-memory and pushes directly to Convex's `deploy2` protocol. No files on disk.
+- **`@alchemy/convex-confect`** — Optional (Confect Adapter). Adapter for users on Confect.
 
-Each flavor is a thin composition over `@alchemy/convex` + the DSL (for 2/3) + a deployer. Packages release independently if needed.
+Each mode is a thin composition over `@alchemy/convex` + the DSL (for 2/3) + a deployer. Packages release independently if needed.
 
 ## 4. The Six Technical Fixes
 
-Each anti-pattern from prior drafts is replaced with a concrete, enforceable solution. These apply across Flavors 2 and 3 (where the DSL is used) and document the rules `@alchemy/convex-dsl` enforces.
+Each anti-pattern from prior drafts is replaced with a concrete, enforceable solution. These apply across Alchemy DSL + Files and Alchemy DSL + Runtime (where the DSL is used) and document the rules `@alchemy/convex-dsl` enforces.
 
 ### 4.1 Markers → Import-driven boundary
 
 **Problem**: `/* ALCHEMY:BEGIN <section> */` comment markers in user-owned files (`convex/http.ts`, `convex/schema.ts`, `convex/convex.config.ts`) are a known anti-pattern. Markers get deleted as noise, edits between them get lost on regeneration, IDEs and formatters move them, merge conflicts split them.
 
-**Solution (Flavor 2)**: Alchemy writes only to `convex/_alchemy/`. The few things that must live in a top-level Convex file are written by the user once, as a real TypeScript re-export, never edited again:
+**Solution (Alchemy DSL + Files)**: Alchemy writes only to `convex/_alchemy/`. The few things that must live in a top-level Convex file are written by the user once, as a real TypeScript re-export, never edited again:
 
 ```ts
 // convex/http.ts (user writes once)
@@ -64,7 +64,7 @@ export { default } from "./_alchemy/crons";
 export * from "./_alchemy/migrations";
 ```
 
-**Solution (Flavor 3)**: No files at all. The synthesized modules feed esbuild via a virtual filesystem plugin. See §10.6.
+**Solution (Alchemy DSL + Runtime)**: No files at all. The synthesized modules feed esbuild via a virtual filesystem plugin. See §10.6.
 
 ### 4.2 Schema compiler → Strict compileable subset + explicit codecs
 
@@ -136,15 +136,15 @@ export const convexHttpAction = <Api extends HttpApi.HttpApi.Any>(
 
 Mutations and actions are exempt. `TestClock` enables deterministic cache-behavior tests.
 
-### 4.5 `src/convex/` rebrand → No rebrand for Flavors 1/2; zero files for Flavor 3
+### 4.5 `src/convex/` rebrand → No rebrand for Plain Convex and Alchemy DSL + Files; zero files for Alchemy DSL + Runtime
 
 **Problem**: Telling existing Convex users to move authoring from `convex/` to `src/convex/` and treat `convex/` as a generated target is a daily-workflow disruption.
 
 **Solution**:
 
-- **Flavor 1**: User keeps `convex/` exactly as today. Alchemy only manages the cloud and pushes via Bundle.
-- **Flavor 2**: User keeps `convex/` as authoring workspace. Alchemy generates into `convex/_alchemy/` sibling. User files import from `_alchemy/` via 1-line re-exports.
-- **Flavor 3**: No on-disk Convex files at all. User authors `defineApp` in `src/convex/app.ts` (or wherever). See §10.
+- **Plain Convex**: User keeps `convex/` exactly as today. Alchemy only manages the cloud and pushes via Bundle.
+- **Alchemy DSL + Files**: User keeps `convex/` as authoring workspace. Alchemy generates into `convex/_alchemy/` sibling. User files import from `_alchemy/` via 1-line re-exports.
+- **Alchemy DSL + Runtime**: No on-disk Convex files at all. User authors `defineApp` in `src/convex/app.ts` (or wherever). See §10.
 
 ### 4.6 30 `Schema.Unknown` component wrappers → Component substrate + typed clients
 
@@ -157,18 +157,18 @@ Mutations and actions are exempt. `TestClock` enables deterministic cache-behavi
 3. A required first-party `Migrations` wrapper over `@convex-dev/migrations`, because database migrations are the component that turns Alchemy's deploy into full application-data lifecycle management.
 4. A promoted component catalog for the components that become materially better in Alchemy: migrations, agents, workflow/workpool/retrier, caching, storage, rate limiting, aggregates, counters, geospatial indexes, dynamic crons, auth/authz, Mux, and AI cost tracking. Everything else works through the generic substrate immediately and can be promoted later without changing the substrate.
 
-## 5. The Four Authoring Flavors
+## 5. The Four Authoring Modes
 
-Each flavor is the right answer for one user profile. The docs site has an opinionated "Choose your flavor" page that directs new users; everything else is supported but not first-recommended.
+Each mode is the right answer for one user profile. The docs site has an opinionated "Choose your authoring mode" page that directs new users; everything else is supported but not first-recommended.
 
-| Flavor | Authoring model | Deploy mechanism | Packages installed | Recommended for |
+| Mode | Authoring model | Deploy mechanism | Packages installed | Recommended for |
 |---|---|---|---|---|
-| **1** Plain Convex | User writes `convex/*.ts` (today's Convex) | `convex deploy` via Bundle | `@alchemy/convex` | Existing Convex users adopting Alchemy for infra only |
-| **2** DSL + Files | User writes `defineApp` + DSL | DSL generates `convex/_alchemy/`, then `convex deploy` | `@alchemy/convex` + `@alchemy/convex-dsl` + `@alchemy/convex-files` | New projects; Effect-first teams who still want Convex's CLI in the loop |
-| **3** DSL + Runtime | User writes `defineApp` + DSL | Bundles in-memory; pushes directly via `deploy2` protocol | `@alchemy/convex` + `@alchemy/convex-dsl` + `@alchemy/convex-runtime` | Effect maximalists; teams who want zero Convex files in their repo (experimental) |
-| **4** Confect | User writes Confect | Confect CLI codegens + deploys | `@alchemy/convex` + `@alchemy/convex-confect` + `confect` | Existing Confect users |
+| Plain Convex | User writes `convex/*.ts` (today's Convex) | `convex deploy` via Bundle | `@alchemy/convex` | Existing Convex users adopting Alchemy for infra only |
+| Alchemy DSL + Files | User writes `defineApp` + DSL | DSL generates `convex/_alchemy/`, then `convex deploy` | `@alchemy/convex` + `@alchemy/convex-dsl` + `@alchemy/convex-files` | New projects; Effect-first teams who still want Convex's CLI in the loop |
+| Alchemy DSL + Runtime | User writes `defineApp` + DSL | Bundles in-memory; pushes directly via `deploy2` protocol | `@alchemy/convex` + `@alchemy/convex-dsl` + `@alchemy/convex-runtime` | Effect maximalists; teams who want zero Convex files in their repo (experimental) |
+| Confect Adapter | User writes Confect | Confect CLI codegens + deploys | `@alchemy/convex` + `@alchemy/convex-confect` + `confect` | Existing Confect users |
 
-### 5.1 Flavor 1 — Plain Convex
+### 5.1 Plain Convex
 
 ```ts
 // User keeps convex/*.ts files exactly as today, no DSL, no codegen.
@@ -184,7 +184,7 @@ const worker = yield* Cloudflare.Worker("App", { bindings: { CONVEX: dep } });
 
 Pure IaC composition. No new mental model.
 
-### 5.2 Flavor 2 — DSL + Files
+### 5.2 Alchemy DSL + Files
 
 ```ts
 // src/convex-app.ts (or anywhere the user prefers)
@@ -211,22 +211,22 @@ const backend = yield* App("Backend", { app, project: "my-app", type: "dev" });
 
 Alchemy generates `convex/_alchemy/*` from `defineApp`. User has 4 one-line re-export files in `convex/`. `convex deploy` runs normally.
 
-### 5.3 Flavor 3 — DSL + Runtime (experimental)
+### 5.3 Alchemy DSL + Runtime (experimental)
 
 ```ts
-// src/convex/app.ts — same defineApp as Flavor 2
+// src/convex/app.ts — same defineApp as Alchemy DSL + Files
 export default defineApp({ schema, groups: { notes } });
 
 // alchemy.run.ts
-import { App } from "@alchemy/convex-runtime";  // <-- only line that changes from Flavor 2
+import { App } from "@alchemy/convex-runtime";  // <-- only line that changes from Alchemy DSL + Files
 import app from "./src/convex/app";
 
 const backend = yield* App("Backend", { app, project: "my-app", type: "dev" });
 ```
 
-**No `convex/` directory.** The bundler synthesizes module sources in memory and pushes via Convex's `deploy2` protocol. Migration between Flavors 2 ↔ 3 is one import swap.
+**No `convex/` directory.** The bundler synthesizes module sources in memory and pushes via Convex's `deploy2` protocol. Migration between Alchemy DSL + Files ↔ Alchemy DSL + Runtime is one import swap.
 
-### 5.4 Flavor 4 — Confect
+### 5.4 Confect Adapter
 
 ```ts
 // alchemy.run.ts
@@ -240,12 +240,12 @@ Wraps Confect's CLI in an Alchemy resource. Confect users get Alchemy lifecycle 
 
 ### 5.5 Decision tree (for the docs landing page)
 
-- **You have an existing Convex project and want Alchemy to manage cloud + deployment**: Flavor 1.
-- **New project; you want Effect Schema typed everywhere**: Flavor 2 (recommended default).
-- **You want zero Convex files in git; willing to track an experimental package**: Flavor 3.
-- **You already use Confect**: Flavor 4.
+- **You have an existing Convex project and want Alchemy to manage cloud + deployment**: Plain Convex.
+- **New project; you want Effect Schema typed everywhere**: Alchemy DSL + Files (recommended default).
+- **You want zero Convex files in git; willing to track an experimental package**: Alchemy DSL + Runtime.
+- **You already use Confect**: Confect Adapter.
 
-You can mix Flavor 1 with the DSL as a library (use `defineGroup` to author some files; hand-write others). You cannot mix Flavor 2 and Flavor 3 in the same deployment (they're alternative deployers for the same DSL output).
+You can mix Plain Convex with the DSL as a library (use `defineGroup` to author some files; hand-write others). You cannot mix Alchemy DSL + Files and Alchemy DSL + Runtime in the same deployment (they're alternative deployers for the same DSL output).
 
 ## 6. Package Architecture
 
@@ -274,7 +274,7 @@ packages/alchemy/src/Convex/
 ├── PeriodicBackup.ts, ManualBackup.ts, SSO.ts, OAuthApp.ts
 ├── TeamInvite.ts, TeamMember.ts
 │
-├── Bundle.ts                 # ConvexCli deploy wrapper (used by Flavors 1, 2, 4)
+├── Bundle.ts                 # ConvexCli deploy wrapper (used by Plain Convex, Alchemy DSL + Files, and Confect Adapter)
 	├── Binding.ts                # Binding.Service + Binding.Policy for host runtimes
 	├── RuntimeClient.ts          # typed runtime accessor built by Binding.Service
 	│
@@ -293,7 +293,7 @@ packages/alchemy/src/Convex/
 
 ~33 source files. Dependency: `effect@>=4.0.0-beta.66`.
 
-### 6.2 `@alchemy/convex-dsl` (App DSL — used by Flavors 2/3)
+### 6.2 `@alchemy/convex-dsl` (App DSL — used by Alchemy DSL + Files and Alchemy DSL + Runtime)
 
 ```
 packages/convex-dsl/src/
@@ -328,7 +328,7 @@ packages/convex-dsl/src/
 
 Dependencies: `@convex-dev/migrations` (direct, for the required migrations wrapper). Peer dependencies: `@alchemy/convex`, `effect`, `convex`.
 
-### 6.3 `@alchemy/convex-files` (Flavor 2 deployer)
+### 6.3 `@alchemy/convex-files` (Alchemy DSL + Files deployer)
 
 ```
 packages/convex-files/src/
@@ -340,7 +340,7 @@ packages/convex-files/src/
 
 Dependencies: `@alchemy/convex`, `@alchemy/convex-dsl`, `effect`, `convex`.
 
-### 6.4 `@alchemy/convex-runtime` (Flavor 3 deployer — experimental)
+### 6.4 `@alchemy/convex-runtime` (Alchemy DSL + Runtime deployer — experimental)
 
 ```
 packages/convex-runtime/src/
@@ -375,7 +375,7 @@ packages/convex-runtime/src/
 
 Dependencies: `@alchemy/convex`, `@alchemy/convex-dsl`, `effect`, `esbuild`, `chokidar`. Published as `0.x` until soak time proves stability.
 
-### 6.5 `@alchemy/convex-confect` (Flavor 4 adapter)
+### 6.5 `@alchemy/convex-confect` (Confect Adapter)
 
 ```
 packages/convex-confect/src/
@@ -414,7 +414,7 @@ export const App = (id: string, props: Omit<AppProps<...>, "deployer">) =>
   ConvexCore.App(id, { ...props, deployer: FilesDeployer });
 ```
 
-Open/Closed achieved: new deployers add new packages. No modification of `@alchemy/convex` needed for new flavors.
+Open/Closed achieved: new deployers add new packages. No modification of `@alchemy/convex` needed for new modes.
 
 ## 7. Provider Core (`@alchemy/convex`) — resource details
 
@@ -556,7 +556,7 @@ reconcile: Effect.fn("Convex.Deployment.reconcile")(function* ({ id, news, outpu
 
 Single observe → ensure → sync → return flow. No `output === undefined` create/update split. Ownership is decided by `read` and the Alchemy engine's `Unowned(attrs)` routing; `reconcile` assumes the engine has cleared the write policy and focuses only on convergence.
 
-### 7.3 Bundle subprocess wrapper — `Convex.Bundle` (used by Flavors 1, 2, 4)
+### 7.3 Bundle subprocess wrapper — `Convex.Bundle` (used by Plain Convex, Alchemy DSL + Files, and Confect Adapter)
 
 ```ts
 reconcile: Effect.fn("Convex.Bundle.reconcile")(function* ({ news, output }) {
@@ -583,7 +583,7 @@ reconcile: Effect.fn("Convex.Bundle.reconcile")(function* ({ news, output }) {
 }),
 ```
 
-For Flavor 3 the equivalent is `Convex.AppBundle` + `Convex.AppDeploy` in `@alchemy/convex-runtime`. See §10.
+For Alchemy DSL + Runtime the equivalent is `Convex.AppBundle` + `Convex.AppDeploy` in `@alchemy/convex-runtime`. See §10.
 
 `ConvexCli` is a service so subprocess concerns stay out of resource bodies:
 
@@ -610,7 +610,7 @@ export class ConvexCli extends Context.Service<
 >()("Convex::ConvexCli") {}
 ```
 
-### 7.4 Binding — two-class pattern (used by all Flavors)
+### 7.4 Binding — two-class pattern (used by all modes)
 
 ```ts
 export interface ConvexRuntimeClient {
@@ -856,11 +856,11 @@ Branded ids carry table name via the brand symbol. Codecs compile to their `stor
 | `convex/http.ts` | Default-export from `defineHttp` via `convexHttpAction` adapter |
 | `convex/crons.ts` | Convex Crons from `defineCrons` |
 | `convex/convex.config.ts` | Component install declarations |
-| `convex/migrations.ts` | Logical top-level migration module; Flavor 2 writes `convex/_alchemy/migrations.ts` and expects a one-line re-export |
+| `convex/migrations.ts` | Logical top-level migration module; Alchemy DSL + Files writes `convex/_alchemy/migrations.ts` and expects a one-line re-export |
 | `convex/auth.config.ts` | Auth provider config (if `defineApp.auth` set) |
 | `convex/${group}.ts` (per defineGroup) | Function module — imports user handlers from `defineApp` |
 
-For Flavor 2 the `FilesDeployer` writes these to disk. For Flavor 3 the `RuntimeDeployer` feeds them to the virtual filesystem plugin. **Same codegen, same outputs, different sink.**
+For Alchemy DSL + Files the `FilesDeployer` writes these to disk. For Alchemy DSL + Runtime the `RuntimeDeployer` feeds them to the virtual filesystem plugin. **Same codegen, same outputs, different sink.**
 
 ### 8.4 Typed errors
 
@@ -917,7 +917,7 @@ Client behavior:
 | `VectorSearch` | action | Vector search |
 | `QueryCtx` / `MutationCtx` / `ActionCtx` | per context | Raw Convex ctx escape hatch |
 
-Available from `@alchemy/convex-dsl/server` (generic) or schema-narrowed imports from the generated `convex/_alchemy/services.ts` (Flavor 2 only — Flavor 3 uses type inference at the client level).
+Available from `@alchemy/convex-dsl/server` (generic) or schema-narrowed imports from the generated `convex/_alchemy/services.ts` (Alchemy DSL + Files only — Alchemy DSL + Runtime uses type inference at the client level).
 
 ### 8.6 Clock and ESLint enforcement
 
@@ -942,7 +942,7 @@ export const runAlchemyQuery = (ctx, args, handler) =>
   runAlchemyQueryEffect(ctx, args, handler).pipe(Effect.runPromise);
 ```
 
-ESLint rule `no-raw-date-now-in-query` flags `Date.now()`, `new Date()`, `performance.now()` inside `query(...)` handler bodies. Documented in `guides/convex-query-cache-clock.mdx`.
+ESLint rule `no-raw-date-now-in-query` flags `Date.now()`, `new Date()`, `performance.now()` inside `query(...)` handler bodies. Documented in `convex/guides/query-cache-clock.mdx`.
 
 ### 8.7 Database schema restrictions
 
@@ -997,9 +997,9 @@ test("create + list", () => Effect.gen(function*() {
 }));
 ```
 
-`TestConvex.layer(app)` bundles `app` via the same `AppBundler.bundleFromApp` Flavor 3 uses for production, then feeds the result to `convex-test`'s virtual filesystem. **Tests run against the exact same bundle that production deploys.**
+`TestConvex.layer(app)` bundles `app` via the same `AppBundler.bundleFromApp` Alchemy DSL + Runtime uses for production, then feeds the result to `convex-test`'s virtual filesystem. **Tests run against the exact same bundle that production deploys.**
 
-## 9. Files Deployer (`@alchemy/convex-files`) — Flavor 2 details
+## 9. Files Deployer (`@alchemy/convex-files`) — Alchemy DSL + Files details
 
 ### 9.1 `Convex.AppCode` resource
 
@@ -1091,9 +1091,9 @@ export const plugin = (deployment: Deployment): VitePlugin => ({
 });
 ```
 
-## 10. Runtime Deployer (`@alchemy/convex-runtime`) — Flavor 3 details
+## 10. Runtime Deployer (`@alchemy/convex-runtime`) — Alchemy DSL + Runtime details
 
-This is the most ambitious flavor. It bypasses `convex deploy` entirely and drives Convex's `deploy2` protocol directly. The user keeps zero Convex files in their repo. The whole authoring surface is `defineApp` + a single `App(...)` call in `alchemy.run.ts`.
+This is the most ambitious mode. It bypasses `convex deploy` entirely and drives Convex's `deploy2` protocol directly. The user keeps zero Convex files in their repo. The whole authoring surface is `defineApp` + a single `App(...)` call in `alchemy.run.ts`.
 
 Marked **experimental** until protocol soak time proves stable.
 
@@ -1173,9 +1173,9 @@ export interface AppBundleProps {
 }
 
 export type BundleSource =
-  | { kind: "directory"; path: string }                       // Flavor 1: read from disk
-  | { kind: "filemap"; files: ReadonlyMap<string, string> }    // Flavor 2: in-memory map
-  | { kind: "app"; app: AppDeclaration };                       // Flavor 3: defineApp directly
+  | { kind: "directory"; path: string }                       // Plain Convex: read from disk
+  | { kind: "filemap"; files: ReadonlyMap<string, string> }    // Alchemy DSL + Files: in-memory map
+  | { kind: "app"; app: AppDeclaration };                       // Alchemy DSL + Runtime: defineApp directly
 
 export interface AppBundle extends Resource<
   "Convex.AppBundle",
@@ -1220,13 +1220,13 @@ reconcile: Effect.fn("Convex.AppBundle.reconcile")(function*({ news, output }) {
 
 Three bundler implementations sharing 90% of code via `Bundler/EsbuildConfig.ts`:
 
-- `bundleFromDirectory` — replicates Convex CLI's `entryPoints()` walk + per-file esbuild. For Flavor 1.
-- `bundleFromFileMap` — same esbuild config; resolves files from in-memory map via VirtualFsPlugin. For Flavor 2.
-- `bundleFromApp` — synthesizes virtual module sources from `AppDeclaration` (via shared codegen), feeds to `bundleFromFileMap`. For Flavor 3.
+- `bundleFromDirectory` — replicates Convex CLI's `entryPoints()` walk + per-file esbuild. For Plain Convex.
+- `bundleFromFileMap` — same esbuild config; resolves files from in-memory map via VirtualFsPlugin. For Alchemy DSL + Files.
+- `bundleFromApp` — synthesizes virtual module sources from `AppDeclaration` (via shared codegen), feeds to `bundleFromFileMap`. For Alchemy DSL + Runtime.
 
 ### 10.4 The virtual-fs esbuild plugin
 
-The plugin is the entire mechanism by which Flavor 3 feeds esbuild from memory. Two hooks, four resolution cases, one load case.
+The plugin is the entire mechanism by which Alchemy DSL + Runtime feeds esbuild from memory. Two hooks, four resolution cases, one load case.
 
 ```ts
 // @alchemy/convex-runtime/Bundler/VirtualFsPlugin.ts
@@ -1691,9 +1691,9 @@ Same resources, different target (real cloud dev URL instead of `http://127.0.0.
 - **Local**: 200–400ms loop, works offline, ~30MB binary download (cached).
 - **Cloud**: 500–1500ms loop, needs internet, uses cloud dev quota.
 
-### 10.11 What Flavor 3 does NOT replicate from `convex deploy`
+### 10.11 What Alchemy DSL + Runtime does NOT replicate from `convex deploy`
 
-| Convex CLI feature | Flavor 3 behavior | Mitigation |
+| Convex CLI feature | Alchemy DSL + Runtime behavior | Mitigation |
 |---|---|---|
 | `_generated/*.ts` written to disk | Not written. Types via `typeof app` inference. | Better — types exact, not stale. |
 | Pre/post-deploy `tsc` typecheck | Relies on IDE/CI. | Alchemy can shell out to `tsc -p` as pre-deploy step if user wants. |
@@ -1722,7 +1722,7 @@ The first row is a net win — typed refs from inference beat stale codegen.
 - Mitigation: Convex server TTLs uncommitted pushes. State only records committed deploys, so retries cleanly restart.
 
 **Risk: We diverge from Convex CLI on something subtle.**
-- Impact: Push works via `convex deploy` but fails via Flavor 3 (or vice versa).
+- Impact: Push works via `convex deploy` but fails via Alchemy DSL + Runtime (or vice versa).
 - Mitigation: Byte-equivalence test (§10.8). CI catches drift.
 
 ### 10.13 Code size summary
@@ -1747,7 +1747,7 @@ The first row is a net win — typed refs from inference beat stale codegen.
 
 **~2,060 LOC** for the entire experimental package. ~550 LOC vendored from Convex's open source (lockfile resolver + schemas + binary download — well-understood, low churn). The rest is greenfield Effect code we own.
 
-## 11. Confect Adapter (`@alchemy/convex-confect`) — Flavor 4 details
+## 11. Confect Adapter (`@alchemy/convex-confect`) — Confect Adapter details
 
 Wraps Confect's CLI in an Alchemy resource:
 
@@ -1764,7 +1764,7 @@ export const ConfectDeployer: ConvexDeployer<ConfectSource> = {
       executable: source.cli ?? "bunx",
     });
 
-    // 2. Delegate to Bundle (same wrapper as Flavor 1)
+    // 2. Delegate to Bundle (same wrapper as Plain Convex)
     const bundle = yield* Bundle(`${source.id}/Bundle`, {
       deployment,
       source: path.join(source.confectDir, "../convex"),
@@ -1827,7 +1827,7 @@ defineComponentUse("rag", {
 });
 ```
 
-Equivalent low-level IaC form for Flavor 1 users:
+Equivalent low-level IaC form for Plain Convex users:
 
 ```ts
 yield* Convex.Component("rag", {
@@ -1892,7 +1892,7 @@ app.use(migrations);
 export default app;
 ```
 
-Flavor 2 writes this through shared codegen. Flavor 3 synthesizes the same module in the virtual file map. Flavor 1 can either let `Convex.Component` generate a `_alchemy/components.ts` re-export or keep authoring `convex/convex.config.ts` by hand and only use Alchemy for dependency/install checks.
+Alchemy DSL + Files writes this through shared codegen. Alchemy DSL + Runtime synthesizes the same module in the virtual file map. Plain Convex can either let `Convex.Component` generate a `_alchemy/components.ts` re-export or keep authoring `convex/convex.config.ts` by hand and only use Alchemy for dependency/install checks.
 
 ### 12.2 Component clients
 
@@ -1996,7 +1996,7 @@ The API has three layers:
 - **`m.table(...)` / `m.backfill(...)`** — a lower-level escape hatch for teams that already know how they want to stage the schema/code change. It still gets hashing, dry-run, status, and append-only safety.
 - **`m.patch(...)`** — a source-controlled replacement for dashboard bulk edit. It is for literal or lightweight per-document patches. It defaults to `scope: "dev"` and refuses production unless `allowProduction: true`, `dryRunFirst: true`, and a `maxDocuments` or batching strategy are set.
 
-Generated app-side module, written as `convex/_alchemy/migrations.ts` in Flavor 2 and re-exported from `convex/migrations.ts` so function names stay `migrations:*`:
+Generated app-side module, written as `convex/_alchemy/migrations.ts` in Alchemy DSL + Files and re-exported from `convex/migrations.ts` so function names stay `migrations:*`:
 
 ```ts
 import { Migrations } from "@convex-dev/migrations";
@@ -2106,7 +2106,7 @@ Versions below are the current npm `latest` values verified on 2026-05-19 unless
 | `Components.Workpool` | `@convex-dev/workpool@0.4.6` | `workpool` | Bounded parallelism job queue service. |
 | `Components.ActionRetrier` | `@convex-dev/action-retrier@0.3.0` | `actionRetrier` | Idempotent action retry service. |
 | `Components.ActionCache` | `@convex-dev/action-cache@0.3.0` | `actionCache` | Typed action-result cache factory. |
-| `Components.R2` | `@convex-dev/r2@0.10.1` | `r2` | Convex metadata/client wrapper bridged to Alchemy Cloudflare R2. |
+| `Components.R2` | `@convex-dev/r2@0.10.1` | `r2` | Official Convex R2 component installed from Alchemy-owned Cloudflare R2 resources. |
 | `Components.RateLimiter` | `@convex-dev/rate-limiter@0.3.2` | `rateLimiter` | Typed token-bucket/fixed-window limits. |
 | `Components.Aggregate` | `@convex-dev/aggregate@0.2.1` | `aggregate` | Ordered count/sum/rank aggregates and trigger helpers. |
 | `Components.ShardedCounter` | `@convex-dev/sharded-counter@0.2.0` | `shardedCounter` | High-write-throughput counters. |
@@ -2194,19 +2194,70 @@ Runtime services cover `createThread`, `continueThread`, `generateText`, `stream
 
 #### 12.4.3 Data, storage, and indexing components
 
-`Components.R2` wraps `@convex-dev/r2` as a bridge between `Cloudflare.R2Bucket` and Convex metadata, not as a Cloudflare Worker binding:
+`Components.R2` must be a thin, native wrapper around the official `@convex-dev/r2` component, not a parallel storage abstraction. Alchemy owns the Cloudflare bucket, credentials, CORS intent, Convex env resources, component install, and generated glue. The generated Convex app code still uses upstream `new R2(components.r2)` and `r2.clientApi<DataModel>()`.
 
 ```ts
-const bucket = yield* Cloudflare.R2.Bucket("Uploads", {});
+const bucket = yield* Cloudflare.R2Bucket("Uploads", {
+  name: "uploads",
+});
 
 const uploads = yield* Components.R2("uploads", {
   component: "r2",
   bucket,
-  credentials: R2Credentials.fromSecret("uploads-r2"),
+  credentials: {
+    accessKeyId: Config.redacted("R2_ACCESS_KEY_ID"),
+    secretAccessKey: Config.redacted("R2_SECRET_ACCESS_KEY"),
+    token: Config.redacted("R2_TOKEN"),
+  },
+  endpoint: Config.string("R2_ENDPOINT"),
+  cors: {
+    allowedOrigins: ["https://app.example.com"],
+    allowedMethods: ["GET", "PUT"],
+    allowedHeaders: ["Content-Type"],
+  },
+  client: {
+    module: "files",
+    exportName: "r2",
+    exposeClientApi: {
+      checkReadKey: "requireFileRead",
+      checkUpload: "requireFileUpload",
+      checkDelete: "requireFileDelete",
+      onUpload: "afterFileUpload",
+    },
+  },
 });
 ```
 
-Alchemy derives plain env (`R2_BUCKET`, `R2_ENDPOINT`) from the Cloudflare resource and wires secret env (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) through `Convex.EnvironmentVariable`. If Alchemy grows a native R2 S3 credential resource, this wrapper should accept it; until then it accepts existing secrets. The app-side service wraps `getUrl`, `store`, `syncMetadata`, `getMetadata`, `listMetadata`, and `deleteObject`. Generated code must not publish unauthenticated upload/sync endpoints by default. Tests cover env derivation, generated files, secret handling, metadata queries, and optional live upload/delete smoke.
+The default generated Convex module should look like idiomatic upstream usage:
+
+```ts
+// convex/files.ts
+import { R2 } from "@convex-dev/r2";
+import { components } from "./_generated/api";
+import type { DataModel } from "./_generated/dataModel";
+
+export const r2 = new R2(components.r2);
+
+export const {
+  generateUploadUrl,
+  syncMetadata,
+  onSyncMetadata,
+  getMetadata,
+  listMetadata,
+  deleteObject,
+} = r2.clientApi<DataModel>({
+  checkReadKey: requireFileRead,
+  checkUpload: requireFileUpload,
+  checkDelete: requireFileDelete,
+  onUpload: afterFileUpload,
+});
+```
+
+Alchemy derives `R2_BUCKET` from the Cloudflare resource, accepts or derives the non-secret `R2_ENDPOINT`, and wires secret env (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_TOKEN`) through `Convex.EnvironmentVariable`. `R2_TOKEN` is recorded because Cloudflare issues it with the R2 token set, even though the runtime constructor primarily uses bucket, endpoint, access key ID, and secret access key. If Alchemy grows a native R2 S3 credential resource, this wrapper should accept it; until then it accepts existing secrets.
+
+Runtime helpers should mirror the upstream component exactly: `getUrl`, `generateUploadUrl`, `store`, `syncMetadata`, `getMetadata`, `listMetadata`, `deleteObject`, and `clientApi`. Frontend examples should use `useUploadFile(api.files)` from `@convex-dev/r2/react` or the Svelte/Vue equivalents. Multiple buckets are modeled as multiple `R2` instances with explicit config; metadata coexists in the component table indexed by bucket name. Generated code must not publish unauthenticated upload, read, sync, or delete endpoints by default.
+
+The design must include a Cloudflare CORS story. If current `Cloudflare.R2Bucket` cannot manage bucket CORS, the implementation should either add a first-class `Cloudflare.R2BucketCors` resource or require a documented manual CORS precondition before enabling browser upload helpers. Tests cover env derivation, component install, generated upstream-shaped files, secret handling, CORS plan output, upload auth callbacks, metadata queries/pagination, multi-bucket config, and optional live upload/delete smoke.
 
 `Components.Aggregate` wraps `@convex-dev/aggregate` for ordered aggregate structures: `count`, `sum`, `at`, `indexOf`, `min`, `max`, `paginate`, batch variants, namespace pagination, and write helpers (`insert`, `delete`, `replace`, `replaceOrInsert`, `insertIfDoesNotExist`, `deleteIfExists`). The Alchemy wrapper has two factories:
 
@@ -2398,7 +2449,7 @@ The Provider supports self-host mode via `Convex.providers({ selfHosted: true })
 - `Credentials.fromAuthProvider` resolves to `{ url: $CONVEX_SELF_HOSTED_URL, adminKey: Redacted.make($CONVEX_SELF_HOSTED_ADMIN_KEY) }`.
 - Cloud-only resource provider layers skipped: `PeriodicBackup`, `ManualBackup`, `CustomDomain`, `DeployKey`, `PreviewDeployment`, `SSO`, `OAuthApp`, `TeamInvite`, `TeamMember`.
 - Per-deployment admin and scaffolding resources work identically.
-- All flavor deployers detect self-host mode and route accordingly (Flavor 1's `Bundle` runs `convex deploy --url ... --admin-key ...`; Flavor 3's `AppDeploy` targets the self-host URL).
+- All mode deployers detect self-host mode and route accordingly (Plain Convex's `Bundle` runs `convex deploy --url ... --admin-key ...`; Alchemy DSL + Runtime's `AppDeploy` targets the self-host URL).
 
 ## 16. Testing strategy
 
@@ -2421,7 +2472,7 @@ Test categories:
 - **DSL codegen snapshot tests**: small fixture app → assert exact generated file contents (sorted, stable).
 - **Schema compiler unit tests**: each compileable shape, each rejected shape. TS expect-error tests for rejections.
 - **HTTP adapter integration**: `convex-test` instance + call adapter + assert Effect HttpApi semantics.
-- **Byte-equivalence**: §10.8 — Flavor 3 push payload matches `convex deploy --dry-run` for the same logical app.
+- **Byte-equivalence**: §10.8 — Alchemy DSL + Runtime push payload matches `convex deploy --dry-run` for the same logical app.
 - **End-to-end via `@alchemy/convex-dsl/test`**: `TestConvex.layer(app, ...)` tests all server logic.
 - **Worker fixture tests**: per AGENTS.md convention — deploy a Worker bound to a Convex deployment and drive it over HTTP.
 
@@ -2436,7 +2487,7 @@ Documentation is JSDoc-driven for generated API reference per Alchemy convention
 The docs lead with one end-to-end story that demonstrates why Alchemy + Convex is more than "Convex deploy wrapped in another CLI":
 
 1. Create or select a Convex project.
-2. Choose Flavor 2 (`@alchemy/convex-dsl` + `@alchemy/convex-files`) as the recommended default.
+2. Choose Alchemy DSL + Files (`@alchemy/convex-dsl` + `@alchemy/convex-files`) as the recommended default.
 3. Define schema, queries, mutations, and an HTTP route in the Alchemy DSL.
 4. Add Better Auth with generated HTTP routes and secret env vars.
 5. Add Cloudflare R2 through `Cloudflare.R2Bucket` + `Components.R2`.
@@ -2454,31 +2505,31 @@ Hand-written docs:
 
 | Doc | Purpose |
 |---|---|
-| `concepts/convex-overview.mdx` | What Alchemy owns, what Convex owns, and why the integration exists. |
-| `concepts/convex-flavors.mdx` | The 4-flavor decision tree. Default: Flavor 2. |
-| `concepts/convex-generated-files.mdx` | Generated-file ownership contract and drift behavior. |
-| `concepts/convex-components.mdx` | Generic component substrate, promoted wrappers, maturity tiers, and component env/http rules. |
-| `concepts/convex-security-model.mdx` | Tokens, deploy keys, Convex env vars, generated HTTP routes, and secret redaction. |
-| `guides/convex-quickstart.mdx` | Flavor 1: existing Convex app, Alchemy manages infra. |
-| `guides/convex-app-quickstart.mdx` | Flavor 2 golden path. This is the recommended start page. |
-| `guides/convex-runtime-experimental.mdx` | Flavor 3 runtime push, with experimental warning and byte-equivalence caveats. |
-| `guides/migrating-from-confect.mdx` | Confect -> DSL migration. |
-| `guides/convex-migrations.mdx` | Expand/backfill/contract workflow using `defineMigrations`. |
-| `guides/convex-auth.mdx` | Tier 1 JWT providers, Convex Auth, and Better Auth. |
-| `guides/convex-components-promoted.mdx` | Per-promoted-wrapper usage and examples. |
-| `guides/convex-r2.mdx` | R2 bucket + Convex metadata integration. |
-| `guides/convex-workflows-and-jobs.mdx` | Workflow, Workpool, Action Retrier, Action Cache. |
-| `guides/convex-typed-errors.mdx` | Schema-typed errors round-tripping through clients. |
-| `guides/convex-query-cache-clock.mdx` | `Date.now()` footgun + Clock service. |
-| `guides/convex-self-host.mdx` | Self-host deployment. |
-| `guides/convex-testing.mdx` | `@alchemy/convex-dsl/test`, component registration, and generated service Layers. |
-| `guides/convex-production-checklist.mdx` | Deploy keys, secrets, custom domains, backups, logs, migration gates, and rollback notes. |
-| `recipes/convex-zero-downtime-rename.mdx` | Rename a field with dual-write + backfill + contract. |
-| `recipes/convex-rotate-secret.mdx` | Rotate Convex env vars and generated app secrets. |
-| `recipes/convex-recover-failed-migration.mdx` | Inspect, resume, cancel, or retire failed migrations. |
-| `recipes/convex-mux-video-catalog.mdx` | Mux component, webhook route, and backfill. |
-| `recipes/convex-better-auth-cloudflare.mdx` | Better Auth with Cloudflare-hosted frontend. |
-| `recipes/convex-dynamic-tenant-crons.mdx` | Runtime cron registration with `@convex-dev/crons`. |
+| `convex/index.mdx` | What Alchemy owns, what Convex owns, and why the integration exists. |
+| `convex/concepts/authoring-modes.mdx` | The 4-mode decision tree. Default: Alchemy DSL + Files. |
+| `convex/concepts/generated-files.mdx` | Generated-file ownership contract and drift behavior. |
+| `convex/concepts/components.mdx` | Generic component substrate, promoted wrappers, maturity tiers, and component env/http rules. |
+| `convex/concepts/security-model.mdx` | Tokens, deploy keys, Convex env vars, generated HTTP routes, and secret redaction. |
+| `convex/guides/quickstart.mdx` | Plain Convex: existing Convex app, Alchemy manages infra. |
+| `convex/guides/app-quickstart.mdx` | Alchemy DSL + Files golden path. This is the recommended start page. |
+| `convex/guides/runtime-experimental.mdx` | Alchemy DSL + Runtime push path, with experimental warning and byte-equivalence caveats. |
+| `convex/guides/migrating-from-confect.mdx` | Confect Adapter -> Alchemy DSL + Files migration. |
+| `convex/guides/migrations.mdx` | Expand/backfill/contract workflow using `defineMigrations`. |
+| `convex/guides/auth.mdx` | Tier 1 JWT providers, Convex Auth, and Better Auth. |
+| `convex/guides/components-promoted.mdx` | Per-promoted-wrapper usage and examples. |
+| `convex/guides/r2.mdx` | Official `@convex-dev/r2` component around Alchemy-owned Cloudflare buckets. |
+| `convex/guides/workflows-and-jobs.mdx` | Workflow, Workpool, Action Retrier, Action Cache. |
+| `convex/guides/typed-errors.mdx` | Schema-typed errors round-tripping through clients. |
+| `convex/guides/query-cache-clock.mdx` | `Date.now()` footgun + Clock service. |
+| `convex/guides/self-host.mdx` | Self-host deployment. |
+| `convex/guides/testing.mdx` | `@alchemy/convex-dsl/test`, component registration, and generated service Layers. |
+| `convex/guides/production-checklist.mdx` | Deploy keys, secrets, custom domains, backups, logs, migration gates, and rollback notes. |
+| `convex/recipes/zero-downtime-rename.mdx` | Rename a field with dual-write + backfill + contract. |
+| `convex/recipes/rotate-secret.mdx` | Rotate Convex env vars and generated app secrets. |
+| `convex/recipes/recover-failed-migration.mdx` | Inspect, resume, cancel, or retire failed migrations. |
+| `convex/recipes/mux-video-catalog.mdx` | Mux component, webhook route, and backfill. |
+| `convex/recipes/better-auth-cloudflare.mdx` | Better Auth with Cloudflare-hosted frontend. |
+| `convex/recipes/dynamic-tenant-crons.mdx` | Runtime cron registration with `@convex-dev/crons`. |
 
 `llms.txt` gets one line per resource, one line per promoted component, and one line per guide. The generated API reference is still produced from JSDoc in source files; do not hand-edit generated provider docs.
 
@@ -2489,13 +2540,13 @@ The docs must make file ownership boringly explicit:
 | Path | Owner | Drift behavior |
 |---|---|---|
 | `alchemy.run.ts` / stack entrypoint | User | Never generated or overwritten. |
-| `convex/schema.ts` in Flavor 1 | User | Alchemy reads only. |
-| `convex/*.ts` in Flavor 1 | User | Alchemy reads only except explicitly requested component scaffolds. |
+| `convex/schema.ts` in Plain Convex | User | Alchemy reads only. |
+| `convex/*.ts` in Plain Convex | User | Alchemy reads only except explicitly requested component scaffolds. |
 | `convex/_alchemy/**` | Alchemy | Overwrite on codegen; warn on manual edits. Optional `strictDrift` fails. |
-| `convex/convex.config.ts` in Flavor 2 | Merge-managed | Alchemy owns generated component imports/`app.use`; user-owned regions are preserved. |
+| `convex/convex.config.ts` in Alchemy DSL + Files | Merge-managed | Alchemy owns generated component imports/`app.use`; user-owned regions are preserved. |
 | `convex/http.ts` | Merge-managed | Alchemy registers generated route helpers; never replaces existing router wholesale. |
 | `convex/auth.ts`, `convex/auth.config.ts` | Merge-managed or user-owned by mode | Better Auth and Convex Auth docs explain ownership mode at creation. |
-| `convex/migrations.ts` | User-facing re-export | Flavor 2 writes `convex/_alchemy/migrations.ts`; top-level file is a stable re-export. |
+| `convex/migrations.ts` | User-facing re-export | Alchemy DSL + Files writes `convex/_alchemy/migrations.ts`; top-level file is a stable re-export. |
 | `convex/_generated/**` | Convex CLI | Alchemy never writes; it may require codegen/checks. |
 | `node_modules/**` | Package manager | Alchemy does not patch installed packages. |
 | `.env.local` | User | Alchemy may read for local dev only if explicitly configured; production env goes through resources. |
@@ -2600,7 +2651,7 @@ Convex and component packages move quickly. The docs promise a narrow, testable 
 - Public Alchemy wrappers pin tested upstream major/minor ranges.
 - The generic `Convex.Component` substrate is the escape hatch when a promoted wrapper lags upstream.
 - Weekly CI tests latest compatible `convex`, selected `@convex-dev/*` components, and `effect` catalog range.
-- Flavor 3 additionally runs byte-equivalence against the Convex CLI dry-run payload.
+- Alchemy DSL + Runtime additionally runs byte-equivalence against the Convex CLI dry-run payload.
 - Docs state when npm latest and GitHub `main` disagree; package metadata wins for install instructions.
 - Generated code includes a short version comment for promoted wrappers so bug reports can identify the wrapper/component pair.
 - Breaking upstream drift produces a specific `ConvexComponentVersionDrift` or `ConvexDeployProtocolDrift` error, not a generic bundler failure.
@@ -2609,15 +2660,15 @@ Convex and component packages move quickly. The docs promise a narrow, testable 
 
 Five examples, each self-contained:
 
-**18.1 `examples/cloudflare-convex-plain/`** — Flavor 1. Existing Convex setup, Alchemy manages infra. Convex Auth + Cloudflare Worker.
+**18.1 `examples/cloudflare-convex-plain/`** — Plain Convex. Existing Convex setup, Alchemy manages infra. Convex Auth + Cloudflare Worker.
 
-**18.2 `examples/cloudflare-convex-dsl/`** — Flavor 2 (recommended default). DSL + Files + Cloudflare Worker + Convex Auth + TanStack Start.
+**18.2 `examples/cloudflare-convex-dsl/`** — Alchemy DSL + Files (recommended default). DSL + Files + Cloudflare Worker + Convex Auth + TanStack Start.
 
-**18.3 `examples/cloudflare-convex-runtime/`** — Flavor 3 (experimental). DSL + Runtime push + Cloudflare Worker + Convex Auth + TanStack Start. README clearly marks experimental.
+**18.3 `examples/cloudflare-convex-runtime/`** — Alchemy DSL + Runtime (experimental). DSL + Runtime push + Cloudflare Worker + Convex Auth + TanStack Start. README clearly marks experimental.
 
-**18.4 `examples/cloudflare-convex-better-auth/`** — Flavor 2 with Better Auth instead of Convex Auth. Demonstrates component wiring.
+**18.4 `examples/cloudflare-convex-better-auth/`** — Alchemy DSL + Files with Better Auth instead of Convex Auth. Demonstrates component wiring.
 
-**18.5 `examples/astro-convex-cloudflare/`** — Flavor 2 + Astro SSR.
+**18.5 `examples/astro-convex-cloudflare/`** — Alchemy DSL + Files + Astro SSR.
 
 Each example demonstrates cloud deploy, dev mode, generated-file checks, and (where applicable) self-host swap.
 
@@ -2689,10 +2740,10 @@ Optional follow-up PRs after merge:
 8. **Should generated `convex/_alchemy/` files be committed?** Recommendation: gitignore by default. Commit only when team wants IDE/CI visibility without running Alchemy first. CI runs `alchemy codegen --check` before typecheck.
 9. **HTTP adapter under Convex's Cloudflare backend.** Targets V8-isolate-compatible Web APIs. Self-host parity verified during integration tests.
 10. **Convex `_generated/` collision risk.** `convex/_alchemy/` is sibling, not overlapping.
-11. **Flavor 3 protocol version pinning.** `@alchemy/convex-runtime` pins to a tested range of `convex@*` versions. When Convex publishes a new minor, byte-equivalence CI catches drift before users hit it.
+11. **Alchemy DSL + Runtime protocol version pinning.** `@alchemy/convex-runtime` pins to a tested range of `convex@*` versions. When Convex publishes a new minor, byte-equivalence CI catches drift before users hit it.
 12. **`convex-local-backend` binary version skew.** We pin the binary to a version that's known to match the wire protocol. If Convex publishes a binary that mismatches the wire schema, byte-equivalence test catches it.
-13. **Bundle size limits in Flavor 3.** Convex's V8 isolate has implicit module-size limits. We surface `AppBundle.sizes` and emit warning over 5MB per module. Hard failures surface as `BundleSizeExceeded` tagged error.
-14. **Mixing flavors in one stack.** Supported: Flavor 1 + DSL as library. Not supported: Flavors 2 and 3 simultaneously on the same deployment (alternative deployers).
+13. **Bundle size limits in Alchemy DSL + Runtime.** Convex's V8 isolate has implicit module-size limits. We surface `AppBundle.sizes` and emit warning over 5MB per module. Hard failures surface as `BundleSizeExceeded` tagged error.
+14. **Mixing modes in one stack.** Supported: Plain Convex + DSL as library. Not supported: Alchemy DSL + Files and Alchemy DSL + Runtime simultaneously on the same deployment (alternative deployers).
 
 ## 22. Approval gate
 
@@ -2740,7 +2791,7 @@ After spec review and approval, transition to `superpowers:writing-plans` to pro
 - Intro to migrations: https://stack.convex.dev/intro-to-migrations
 - Lightweight zero-downtime migrations: https://stack.convex.dev/lightweight-zero-downtime-migrations
 
-### Convex CLI source (this design grounds Flavor 3 in)
+### Convex CLI source (this design grounds Alchemy DSL + Runtime in)
 
 - `npm-packages/convex/src/cli/deploy.ts`
 - `npm-packages/convex/src/cli/lib/components.ts` (`runPush`, `startComponentsPushAndCodegen`)

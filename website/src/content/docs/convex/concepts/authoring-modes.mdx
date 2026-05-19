@@ -1,0 +1,162 @@
+---
+title: Convex Authoring Modes
+description: Choose between Plain Convex, Alchemy DSL + Files, Alchemy DSL + Runtime, and Confect Adapter.
+sidebar:
+  order: 91
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+## Overview
+
+The Convex integration supports four authoring modes because teams do
+not all start from the same place:
+
+- some already have a working `convex/` directory and only want Alchemy
+  to manage infrastructure,
+- some want an Effect-first typed DSL but still trust the Convex CLI as
+  the deploy engine,
+- some want a zero-files runtime push path and are willing to accept
+  experimental risk,
+- some are already invested in Confect.
+
+The recommended default is **Alchemy DSL + Files**.
+
+## Comparison table
+
+| Mode | Best for | What Alchemy owns | What you still write | Risk |
+| --- | --- | --- | --- | --- |
+| Plain Convex | Existing Convex apps that want Alchemy for infra only | Project, deployment, env vars, bindings, bundle/deploy orchestration | `convex/*.ts`, schema, HTTP routes, components, migrations in standard Convex form | Lowest migration risk, but fewer Alchemy-level guarantees around codegen and typed wrappers |
+| Alchemy DSL + Files | New apps and Effect-first teams that still want the Convex CLI in the loop | Everything from Plain Convex plus generated `convex/_alchemy/**`, codegen manifest, typed DSL integration, migration metadata | `defineApp(...)`, DSL groups, schema, migrations, and a few stable top-level re-exports | Recommended default; some generated-file ownership discipline required |
+| Alchemy DSL + Runtime | Teams that want zero Convex files in git and accept an experimental deployer | Same DSL as Alchemy DSL + Files, but deployed by the runtime push protocol instead of filesystem output | `defineApp(...)` and app code only; no `convex/` directory required | Highest risk; direct protocol integration can drift with upstream Convex CLI behavior |
+| Confect Adapter | Existing Confect users who want Alchemy around current workflows | Infra resources, deployment lifecycle, and Confect Adapter orchestration | Confect app definitions and Confect-specific authoring | Medium risk; adapter quality depends on Confect and Convex upstream stability |
+
+## The decision tree
+
+Start with the simplest question that matches your repository today:
+
+1. If you already have a normal Convex app and do not want to rewrite
+   it, use **Plain Convex**.
+2. If you are starting fresh and want Effect Schema, generated services,
+   typed migrations, and explicit file ownership, use **Alchemy DSL + Files**.
+3. If you want the DSL from Alchemy DSL + Files but specifically do not want a
+   `convex/` directory on disk, use **Alchemy DSL + Runtime** and accept that it is
+   experimental.
+4. If your team already uses Confect and wants Alchemy to wrap it rather
+   than replace it, use **Confect Adapter**.
+
+## Plain Convex
+
+Plain Convex keeps Convex authoring exactly as Convex users expect it today.
+Alchemy manages the deploy-time surfaces around it.
+
+All snippets on this page are fragments — they run inside the
+`Effect.gen(function* () { ... })` body of an `Alchemy.Stack(...)`
+declaration. See the [overview](/convex/) for the full stack shape.
+
+```ts
+import * as Convex from "@alchemy/convex";
+
+const project = yield* Convex.Project("MyApp", { slug: "my-app" });
+const deployment = yield* Convex.Deployment("Dev", {
+  project,
+  type: "dev",
+});
+const code = yield* Convex.Bundle("Code", {
+  deployment,
+  source: "./convex",
+});
+```
+
+Choose Plain Convex when stability and incremental adoption matter more
+than a new authoring model.
+
+## Alchemy DSL + Files
+
+Alchemy DSL + Files is the golden path for new projects. You write an app in the
+planned Alchemy DSL, and Alchemy generates the Convex-facing files into
+`convex/_alchemy/` before running the normal Convex deployment flow.
+
+```ts
+import app from "./src/convex-app";
+import { App } from "@alchemy/convex-files";
+
+const backend = yield* App("Backend", {
+  app,
+  project: "my-app",
+  type: "dev",
+});
+```
+
+Why this is the default:
+
+- the source of truth is typed application code,
+- generated files have a clear owner,
+- Convex's own CLI still verifies and deploys the app,
+- the migration path to Alchemy DSL + Runtime is designed to be one deployer swap.
+
+## Alchemy DSL + Runtime
+
+Alchemy DSL + Runtime uses the same DSL as Alchemy DSL + Files but skips on-disk Convex files
+and pushes a synthesized bundle directly to Convex's deploy protocol.
+
+```ts
+import app from "./src/convex/app";
+import { App } from "@alchemy/convex-runtime";
+
+const backend = yield* App("Backend", {
+  app,
+  project: "my-app",
+  type: "dev",
+});
+```
+
+This mode exists for teams that want the strongest "one program"
+story, but it is explicitly experimental because it depends on close
+protocol compatibility with Convex's own tooling.
+
+## Confect Adapter
+
+Confect Adapter keeps Confect as the authoring layer and adds Alchemy around
+it for project, deployment, env, and host integration.
+
+```ts
+import confectApp from "./confect/app";
+import { App } from "@alchemy/convex-confect";
+
+const backend = yield* App("Backend", {
+  app: confectApp,
+  project: "my-app",
+  type: "dev",
+});
+```
+
+This is the path for teams that want better infrastructure composition
+without migrating their app model immediately.
+
+## What changes between Alchemy DSL + Files and Alchemy DSL + Runtime
+
+Alchemy DSL + Files and Alchemy DSL + Runtime intentionally share the same app DSL. The planned
+difference is the deployer:
+
+| Surface | Alchemy DSL + Files | Alchemy DSL + Runtime |
+| --- | --- | --- |
+| Source of truth | `defineApp(...)` | `defineApp(...)` |
+| Generated files on disk | Yes, under `convex/_alchemy/**` | No |
+| Final deploy path | `convex deploy` | Runtime `deploy2` protocol |
+| Stability target | Default production path | Experimental |
+
+That shared contract is important because it keeps teams from getting
+locked into one deployment mechanism.
+
+## Mixing and migration rules
+
+- Plain Convex can coexist with some DSL-authored helper code if you want to
+  adopt pieces gradually.
+- Alchemy DSL + Files and Alchemy DSL + Runtime are alternative deployers for the same DSL output, so
+  they should not manage the same deployment at the same time.
+- Moving from Alchemy DSL + Files to Alchemy DSL + Runtime is intended to be an import swap plus
+  operational review, not a rewrite of your schema and handlers.
+
+If you are unsure, start with Alchemy DSL + Files. It gives the implementation the
+clearest contract while staying closest to the normal Convex workflow.

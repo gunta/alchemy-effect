@@ -1,0 +1,177 @@
+---
+title: Mux Video Catalog with Convex
+description: Sync Mux video data into Convex with webhooks and backfill.
+sidebar:
+  order: 13
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+The planned Mux wrapper is an integration bridge, not a tiny install helper.
+It has to coordinate:
+
+- Convex component state,
+- generated wrappers similar to `@mux/convex-mux-init`,
+- deploy-time env vars,
+- a public webhook route,
+- one-time or repeated backfill runs.
+
+This recipe is the operational shape we want users to follow.
+
+## Step 1: Declare the Mux component
+
+Inside the `Alchemy.Stack` `Effect.gen` body, pass redacted secrets through
+`Config.redacted("NAME")` (from `effect/Config`):
+
+```ts
+const mux = yield* Components.Mux("Mux", {
+  name: "mux",
+  tokenId: Config.redacted("MUX_TOKEN_ID"),
+  tokenSecret: Config.redacted("MUX_TOKEN_SECRET"),
+  webhookSecret: Config.redacted("MUX_WEBHOOK_SECRET"),
+  httpPrefix: "/mux",
+  backfill: {
+    run: "manual",
+    includeVideoMetadata: true,
+  },
+});
+```
+
+The wrapper should install `@mux/convex`, generate app-level helpers such as
+`muxWebhook.ts`, `muxHttp.ts`, safe query wrappers, and backfill wiring, and
+merge routes without replacing an existing `convex/http.ts`.
+
+## Step 2: Plan before the first deploy
+
+Run:
+
+```sh
+alchemy plan
+```
+
+Expected plan shape:
+
+```txt
+Components
+  + install @mux/convex as components.mux
+
+Secrets
+  + set MUX_TOKEN_ID            (redacted, create)
+  + set MUX_TOKEN_SECRET        (redacted, create)
+  + set MUX_WEBHOOK_SECRET      (redacted, create)
+
+HTTP
+  + /mux/webhook                generated Mux webhook route
+
+Post-deploy commands
+  + exact Mux backfill command printed here
+```
+
+Two contract details matter:
+
+- the webhook route is explicit and visible,
+- the backfill command is printed exactly by Alchemy when it is not being run
+  automatically.
+
+## Step 3: Deploy generated routes and env wiring
+
+Run:
+
+```sh
+alchemy deploy
+```
+
+Expected result:
+
+- the Mux component is installed,
+- generated route files are merged,
+- secret env vars are configured,
+- the webhook endpoint exists before you ask Mux to send production events.
+
+## Step 4: Configure the Mux webhook endpoint
+
+Point Mux at the generated route:
+
+```txt
+https://app.example.com/mux/webhook
+```
+
+Use `MUX_WEBHOOK_SECRET` for signature verification. Keep the secret redacted
+in deploy state and runtime logs.
+
+## Step 5: Run the initial backfill
+
+The exact generated command is printed by `alchemy plan` or `alchemy deploy`
+because the wrapper owns the app-side backfill function names. Run that command
+verbatim.
+
+Example output shape in plan:
+
+```txt
+Post-deploy commands
+  convex run <generated-mux-backfill-function> '{"includeVideoMetadata":true}'
+```
+
+Expected behavior:
+
+- existing Mux assets are imported into Convex,
+- the generated event tables and catalog data are populated,
+- later webhook deliveries only need to keep the catalog fresh.
+
+## Step 6: Recover from missed events or a broken route
+
+When the catalog and Mux diverge, use this order:
+
+1. verify the webhook route still exists in plan output,
+2. verify the webhook secret still matches the Mux dashboard,
+3. rerun the generated backfill command,
+4. replay a webhook fixture against `/mux/webhook`,
+5. confirm the event table receives new entries.
+
+Expected healthy webhook route shape in plan:
+
+```txt
+HTTP
+  + /mux/webhook                generated Mux webhook route
+```
+
+If that route disappears from the plan unexpectedly, fix route ownership before
+debugging backfill data.
+
+## What Alchemy should own vs what the app still owns
+
+Alchemy should own:
+
+- component installation,
+- generated route scaffolding,
+- env var wiring,
+- printing the exact backfill command,
+- not overwriting existing `convex/http.ts`.
+
+Your app still owns:
+
+- how the frontend renders catalog data,
+- any product-specific indexing or denormalization built on top of Mux data,
+- provider-side Mux dashboard setup,
+- operational decisions about when to rerun backfills.
+
+## Common caveats
+
+- Mux is a Tier C bridge. Expect more manual coordination than a pure typed
+  Convex component.
+- Backfill runs through generated Convex functions, not through provider
+  lifecycle code that imports the Mux SDK directly.
+- A green deploy is not proof that historical assets were imported. Run the
+  backfill explicitly when needed.
+- The wrapper should merge HTTP routes, not replace an existing router.
+
+## When to stop and ask a human
+
+Stop and escalate if:
+
+- your existing `convex/http.ts` already owns `/mux/*` routes,
+- you cannot tell whether the webhook secret in Mux matches the deployed one,
+- replaying a fixture would expose real customer media or signed URLs in logs,
+- the backfill would duplicate billing-sensitive side effects,
+- catalog rows and Mux assets disagree in ways that suggest manual data repair
+  rather than a simple rerun.

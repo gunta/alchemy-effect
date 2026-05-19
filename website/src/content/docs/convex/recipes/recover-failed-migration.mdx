@@ -1,0 +1,179 @@
+---
+title: Recover a Failed Convex Migration
+description: Inspect, resume, cancel, retire, or replace a failed Convex migration.
+sidebar:
+  order: 12
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+When an online migration fails, the first rule is simple: do not rush to the
+contract step. Keep the rollout in the safe expand/backfill posture until you
+understand what happened.
+
+This recipe covers the safe recovery ladder:
+
+1. inspect,
+2. verify and sample,
+3. fix and resume,
+4. cancel only if necessary,
+5. retire only when the migration is truly done or intentionally abandoned,
+6. create a replacement migration if the original source changed materially.
+
+## Step 1: Inspect the current rollout state
+
+Start with a plan:
+
+```sh
+alchemy plan
+```
+
+Expected migration section for a broken rollout:
+
+```txt
+Migrations
+  expand   20260519_user_display_name       complete
+  backfill 20260519_user_display_name       failed
+  contract 20260519_user_display_name       blocked until verify is clean
+```
+
+The critical signal is that contract remains blocked.
+
+## Step 2: Run verify to measure the blast radius
+
+Run the generated verify function:
+
+```sh
+convex run migrations:verifyUserDisplayName '{}'
+```
+
+Expected output shape:
+
+```json
+{
+  "remaining": 37,
+  "sample": [
+    { "_id": "..." }
+  ]
+}
+```
+
+Use `remaining` to judge whether the problem is isolated or systemic. Use
+`sample` to understand whether documents are malformed, unexpectedly large, or
+missing prerequisites.
+
+## Step 3: Re-run from the safe entrypoint after fixing code
+
+If the failure was caused by code that can be fixed without changing the
+migration name or intent, fix the app and re-run the pending migration:
+
+```sh
+convex run migrations:runPending '{}'
+```
+
+This is the normal resume path. The design contract is that Alchemy uses
+`@convex-dev/migrations` and preserves its resume semantics instead of
+re-implementing backfill state in the provider.
+
+## Step 4: Use a dry run before mutating more data
+
+For migrations configured with `dryRunFirst: true`, the first batch should run
+in dry-run mode before the write phase starts. If the failure happened before
+real writes, keep that guard enabled while you retry.
+
+Run:
+
+```sh
+alchemy plan
+alchemy deploy
+```
+
+Expected plan shape:
+
+```txt
+Migrations
+  backfill 20260519_user_display_name       pending, run=wait, dry-run-first
+```
+
+If the plan no longer shows `dry-run-first` when you expect it to, stop and
+inspect the migration configuration before retrying.
+
+## Step 5: Cancel only when continuing would be worse
+
+Cancellation is a recovery tool, not the default fix. Use it when:
+
+- the migration logic is clearly wrong,
+- the sample documents show unexpected data shape,
+- downstream code is not yet ready for dual-write or dual-read behavior.
+
+The exact cancel command is intentionally printed by Alchemy as part of the
+migration's operational output rather than being hard-coded into the docs. If
+the current rollout needs cancelation, run the exact generated command Alchemy
+prints for that migration, then confirm the next `alchemy plan` shows the
+backfill as stopped and contract still blocked.
+
+## Step 6: Retire only after the migration is intentionally finished
+
+Completed migrations are append-only by default. If you want to remove one
+from the active list, mark it as retired instead of silently deleting it.
+
+```ts
+m.online("20260519_user_display_name", {
+  retired: true,
+  // existing definition stays source-controlled
+});
+```
+
+Then run:
+
+```sh
+alchemy plan
+```
+
+Expected result: no warning about silently removing a completed migration that
+teammates or lower environments may still need.
+
+## Step 7: Create a replacement migration when the source changed materially
+
+If the original migration definition was wrong enough that you cannot honestly
+say "this is the same migration, fixed," create a new migration name.
+
+```ts
+m.online("20260520_user_display_name_retry", {
+  // corrected rollout
+});
+```
+
+Why: completed migration names are immutable. Reusing the same name with a new
+source hash should fail the next plan and ask for a new migration name.
+
+## Recovery decision table
+
+| Situation | Safe next move |
+| --- | --- |
+| Small bug, same intent, partial progress acceptable | Fix code and rerun `convex run migrations:runPending '{}'` |
+| Failure happened before meaningful writes | Keep `dryRunFirst: true`, redeploy, retry |
+| Backfill logic is unsafe or data shape is unknown | Cancel, keep expand mode, investigate samples |
+| Migration completed and is no longer needed in active rollout lists | Mark it `retired: true` |
+| The migration's meaning changed | Create a new migration name |
+
+## Common caveats
+
+- A blocked contract is helpful. Do not "work around" it by removing the
+  verify step or narrowing the schema manually.
+- Do not edit generated migration code under `convex/_alchemy/**`.
+- Do not delete a failed migration from source control just to quiet the plan.
+- Keep old readers and writers alive until verify is clean, even if most of the
+  backfill already succeeded.
+
+## When to stop and ask a human
+
+Stop and escalate if:
+
+- `verify.sample` shows documents that should not be changed automatically,
+- the migration touches auth, billing, tenancy, or permission data,
+- you cannot explain whether rerunning `runPending` is idempotent for the
+  failed documents,
+- production rollback depends on code paths you are about to remove,
+- the only apparent fix is to edit or delete component-managed migration state
+  manually.

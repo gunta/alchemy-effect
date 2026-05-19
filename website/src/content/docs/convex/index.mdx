@@ -1,0 +1,191 @@
+---
+title: Convex Overview
+description: Understand what Alchemy owns, what Convex owns, and how the planned Convex integration fits together.
+sidebar:
+  order: 90
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+## Overview
+
+Alchemy's planned Convex integration is not just "run `convex deploy`
+from another tool." It is a combined infrastructure and application
+workflow:
+
+- Alchemy manages Convex projects, deployments, environment variables,
+  custom domains, deploy credentials, bindings to other platforms, and
+  deployment orchestration.
+- Convex still owns the database runtime, function execution model,
+  reactive queries, generated `_generated/` client files, and the
+  operational semantics of components and migrations once they are
+  deployed.
+- The DSL-based modes add a typed authoring layer on top, but they
+  still target real Convex concepts such as schema validators,
+  functions, HTTP actions, crons, and components.
+
+The result is one stack that can describe cloud resources,
+application code, generated files, secrets, and rollout policy
+without pretending Alchemy replaces Convex itself.
+
+## The core stack shape
+
+Plain Convex uses standard Convex files. Alchemy DSL + Files and Alchemy DSL + Runtime add a typed DSL.
+All four modes share the same infrastructure core:
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Convex from "@alchemy/convex";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "my-app",
+  {
+    providers: Layer.mergeAll(
+      Cloudflare.providers(),
+      Convex.providers(),
+    ),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const project = yield* Convex.Project("App", { slug: "my-app" });
+    const deployment = yield* Convex.Deployment("Prod", {
+      project,
+      type: "prod",
+    });
+  }),
+);
+```
+
+The package names and APIs above are planned. The important contract is
+the shape:
+
+- `Convex.Project` models the control-plane project.
+- `Convex.Deployment` models the live Convex deployment and exposes the
+  URL, origin, and deploy/admin capabilities that later resources use.
+- `Convex.providers()` is the provider layer that makes those resources
+  available to the stack.
+
+## What Alchemy owns
+
+Alchemy owns the deploy-time control plane and the cross-system
+composition story.
+
+| Surface | Owned by | What that means |
+| --- | --- | --- |
+| Project and deployment lifecycle | Alchemy | Create, adopt, read, update, and delete planned Convex resources through provider lifecycles. |
+| Deploy orchestration | Alchemy | Decide whether deployment happens via `convex deploy`, generated files, or the experimental runtime push protocol. |
+| Environment variable resources | Alchemy | Converge deployment env vars, redact secrets in state, and show plan output clearly. |
+| Host bindings | Alchemy | Bind Convex into Cloudflare Workers, Lambda functions, and other host runtimes without leaking management credentials into runtime code. |
+| Codegen ownership contract | Alchemy | Define which generated files are safe to overwrite, which files are merge-managed, and how drift is checked in CI. |
+| Component installation metadata | Alchemy | Install components, pass env and HTTP mount options, and expose typed wrappers where Alchemy adds value. |
+| Migration rollout policy | Alchemy | Model expand, backfill, and contract as an operational workflow rather than a one-off script. |
+
+Alchemy does **not** replace Convex's runtime, storage engine, or
+reactive semantics. It manages the boundary around them.
+
+## What Convex owns
+
+Convex remains authoritative for application behavior after deploy.
+
+| Surface | Owned by | What that means |
+| --- | --- | --- |
+| Database runtime | Convex | Tables, indexes, document storage, and query execution happen inside Convex. |
+| Function execution | Convex | Queries, mutations, actions, crons, and HTTP actions run using Convex's runtime model. |
+| `_generated` artifacts | Convex CLI / backend | Alchemy may depend on them or check them, but it does not write `convex/_generated/**`. |
+| Component runtime state | Convex application data | Workflow runs, migration progress, rate-limit counters, threads, messages, and other component-managed data live inside the Convex deployment. |
+| Runtime validation and routing | Convex | Generated validators, `httpAction` semantics, function refs, and component boundaries still follow Convex's rules. |
+
+That division matters because it keeps the docs honest. A Convex
+component may be installed by Alchemy, but its runtime tables and
+state transitions are still part of the Convex app, not separate cloud
+resources.
+
+## Why Alchemy DSL + Files is the default
+
+Alchemy DSL + Files, `@alchemy/convex-dsl` plus `@alchemy/convex-files`, is the
+recommended default because it is the best compromise between type
+safety and operational transparency:
+
+- You author schema, functions, components, and migrations in one typed
+  DSL.
+- Alchemy generates `convex/_alchemy/**`, which makes ownership and
+  drift explicit instead of editing user files with markers.
+- Convex's own CLI still performs the final deploy, so teams keep the
+  familiar daily workflow and benefit from Convex's proven toolchain.
+- Moving between Alchemy DSL + Files and Alchemy DSL + Runtime is designed to be a deployer
+  swap, not a complete rewrite.
+
+Plain Convex is the least disruptive upgrade for existing Convex apps.
+Alchemy DSL + Runtime is the most ambitious option, but it is explicitly
+experimental because it pushes directly to Convex's deploy protocol.
+Confect Adapter exists to support Confect users without forcing them onto the
+new DSL on day one.
+
+## How the pieces fit together
+
+The planned integration has five big surfaces that work together:
+
+| Surface | Role in the system |
+| --- | --- |
+| Deploy resources | `Convex.Project`, `Convex.Deployment`, `Convex.EnvironmentVariable`, `Convex.CustomDomain`, `Convex.Bundle`, and related resources manage control-plane state. |
+| Authoring mode | Picks how application code is authored and deployed: Plain Convex, Alchemy DSL + Files, Alchemy DSL + Runtime, or Confect Adapter. |
+| Components | Install Convex Components generically and promote selected ones to typed Effect-native wrappers. |
+| Auth | Add JWT providers, Convex Auth, or Better Auth as planned higher-level resources that generate or validate the right Convex files and env surface. |
+| Migrations | Treat schema and data rollout as a sequence with explicit gates: expand, backfill, verify, contract. |
+
+In practice the flow looks like this:
+
+1. Create or select a Convex project and deployment with provider
+   resources.
+2. Choose a mode for application authoring.
+3. Add environment variables, auth configuration, and component
+   installs.
+4. Generate or bundle the Convex app.
+5. Deploy code.
+6. Optionally start or wait on migrations and verify whether contract
+   steps are safe.
+7. Bind the resulting deployment into a host runtime such as a
+   Cloudflare Worker.
+
+## Convex docs map
+
+Use the concept pages to understand the product contract:
+[modes](/convex/concepts/authoring-modes),
+[generated files](/convex/concepts/generated-files),
+[components](/convex/concepts/components), and the
+[security model](/convex/concepts/security-model).
+
+Use the guides for implementation-facing design details:
+[Plain Convex](/convex/guides/quickstart),
+[the recommended app quickstart](/convex/guides/app-quickstart),
+[Alchemy DSL + Runtime](/convex/guides/runtime-experimental),
+[Confect migration](/convex/guides/migrating-from-confect),
+[migrations](/convex/guides/migrations),
+[auth](/convex/guides/auth),
+[promoted components](/convex/guides/components-promoted),
+[R2](/convex/guides/r2),
+[workflows and jobs](/convex/guides/workflows-and-jobs),
+[typed errors](/convex/guides/typed-errors),
+[runtime guardrails](/convex/guides/query-cache-clock),
+[self-hosting](/convex/guides/self-host),
+[testing](/convex/guides/testing), and the
+[production checklist](/convex/guides/production-checklist).
+
+Use the recipes for operational rollout examples:
+[zero-downtime rename](/convex/recipes/zero-downtime-rename),
+[secret rotation](/convex/recipes/rotate-secret),
+[failed migration recovery](/convex/recipes/recover-failed-migration),
+[Mux video catalog](/convex/recipes/mux-video-catalog),
+[Better Auth on Cloudflare](/convex/recipes/better-auth-cloudflare), and
+[dynamic tenant crons](/convex/recipes/dynamic-tenant-crons).
+
+## Planned, not implemented
+
+These docs intentionally describe the target product before the package
+implementation exists. When a snippet references planned APIs such as
+`Convex.Project`, `Convex.Component`, or `defineMigrations`, treat it as
+the contract the implementation should satisfy, not as code you can run
+today.

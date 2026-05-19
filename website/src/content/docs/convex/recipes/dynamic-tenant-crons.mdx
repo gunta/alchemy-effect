@@ -1,0 +1,165 @@
+---
+title: Dynamic Tenant Crons in Convex
+description: Register and clean up tenant-specific runtime crons.
+sidebar:
+  order: 15
+---
+
+> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+
+Use dynamic crons only when the schedule itself is tenant or user data. Static,
+source-controlled jobs should stay on native `defineCrons`.
+
+That division matters:
+
+- `defineCrons` is still the default for fixed app jobs,
+- `Components.Crons` exists for runtime registration and cleanup,
+- dynamic schedules need operational cleanup because tenants can churn.
+
+## Step 1: Keep static jobs static
+
+If every environment should run the same job on the same cadence, stay with
+native Convex cron definitions.
+
+Reach for `Components.Crons` only when you need schedules like:
+
+- one weekly digest per tenant,
+- one reminder job per customer-configured cadence,
+- one per-user poller that can be created and deleted at runtime.
+
+## Step 2: Register a tenant cron through the wrapper
+
+`Components.Crons` is the runtime service. Inside a mutation/action
+handler, `yield*` the service to get a typed client, then call
+`register` — matching how other promoted components expose
+runtime methods:
+
+```ts
+const crons = yield* Components.Crons;
+
+yield* crons.register({
+  name: `tenant:${tenantId}:digest`,
+  schedule: {
+    kind: "cron",
+    cronspec: "0 9 * * 1",
+    tz: "America/New_York",
+  },
+  function: internal.email.weeklyDigest,
+  args: { tenantId },
+});
+```
+
+The wrapper should validate cron syntax early, preserve `tz`, and reject
+interval schedules shorter than `1000ms`.
+
+## Step 3: Plan and deploy the component install
+
+Run:
+
+```sh
+alchemy plan
+alchemy deploy
+```
+
+Expected plan shape:
+
+```txt
+Components
+  + install @convex-dev/crons as components.crons
+
+Post-deploy commands
+  convex run init:crons '{}'
+```
+
+That `init:crons` command is important for source-controlled dynamic seeds or
+idempotent initialization flows.
+
+## Step 4: Run idempotent init when your app uses seeded dynamic jobs
+
+If your app has source-controlled dynamic cron declarations that should exist
+after deploy, run:
+
+```sh
+convex run init:crons '{}'
+```
+
+Expected result shape:
+
+```txt
+Initialized dynamic crons
+```
+
+The key contract is idempotence. Running `init:crons` twice should not create
+duplicate jobs.
+
+## Step 5: List and inspect current registrations
+
+The runtime service should expose `list` and `get`. A healthy list result
+should look roughly like this:
+
+```json
+[
+  {
+    "id": "...",
+    "name": "tenant:acme:digest",
+    "schedule": {
+      "kind": "cron",
+      "cronspec": "0 9 * * 1",
+      "tz": "America/New_York"
+    }
+  }
+]
+```
+
+Use this data to find orphaned registrations after tenant deletion or schedule
+renames.
+
+## Step 6: Delete by name or id during cleanup
+
+When a tenant is removed or a schedule is replaced, delete the old dynamic cron
+explicitly through the wrapper. The planned API should support either stable
+name-based cleanup or deletion by returned id.
+
+Preferred cleanup order:
+
+1. delete by stable name when you still know the tenant identifier,
+2. fall back to delete by id when cleaning up orphaned rows from a previous
+   mismatch,
+3. rerun `convex run init:crons '{}'` if your app also uses source-controlled
+   dynamic seeds.
+
+## Step 7: Recover from orphaned crons
+
+Orphaned crons happen when:
+
+- a tenant was deleted but its cron was not,
+- a schedule name changed,
+- an init step was skipped in one environment,
+- a deploy changed job ownership without deleting the old registration.
+
+Recovery playbook:
+
+1. list current dynamic crons,
+2. compare them with the live tenant set,
+3. delete unknown names or ids,
+4. rerun `convex run init:crons '{}'`,
+5. confirm the expected names reappear exactly once.
+
+## Common caveats
+
+- Dynamic cron overlap behavior should be tested, not assumed.
+- Time zone behavior should be documented explicitly for each product feature.
+- High-cardinality tenant cron fleets can create operational load even when each
+  individual job is simple.
+- A dynamic cron component is a deploy-time install. The cron rows it manages
+  are runtime app data.
+
+## When to stop and ask a human
+
+Stop and escalate if:
+
+- you are about to create one cron per end user without a capacity plan,
+- cron execution timing affects billing, compliance, or contractual deadlines,
+- a time zone or DST rule matters and you have not tested it,
+- you cannot tell whether deleting by name will remove the correct tenant job,
+- the cleanup plan would delete jobs without a clear way to recreate them.
