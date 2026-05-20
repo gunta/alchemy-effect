@@ -12,6 +12,19 @@ import { fileURLToPath } from "node:url";
 import starlightBlog from "starlight-blog";
 import { pagefindIgnoreNoise } from "./plugins/pagefind-ignore-noise.mjs";
 
+const githubRepository =
+  process.env.GITHUB_REPOSITORY ?? "gunta/alchemy-effect";
+const [githubOwner = "gunta", githubRepo = "alchemy-effect"] =
+  githubRepository.split("/");
+const isGitHubPages = process.env.GITHUB_PAGES === "true";
+const githubPagesBase =
+  process.env.GITHUB_PAGES_BASE ??
+  (githubRepo === `${githubOwner}.github.io` ? "/" : `/${githubRepo}`);
+const site = isGitHubPages
+  ? `https://${githubOwner}.github.io`
+  : "https://v2.alchemy.run";
+const base = isGitHubPages ? githubPagesBase : undefined;
+
 /**
  * Copies `src/content/docs/**\/*.{md,mdx}` into the build output dir, preserving
  * the directory layout but normalizing extensions to `.md`. This lets the worker
@@ -122,12 +135,18 @@ function caseSensitiveLinkChecker() {
 
           for (const link of links) {
             if (!link.startsWith("/")) continue; // skip external, anchors, mailto, etc.
-            const clean = link.replace(/\/$/, "");
-            const fileCandidates = [
-              clean,
-              clean + "/index.html",
-              clean + ".html",
-            ];
+            let clean = link.replace(/\/$/, "") || "/";
+            if (base && base !== "/") {
+              if (clean === base) {
+                clean = "/";
+              } else if (clean.startsWith(`${base}/`)) {
+                clean = clean.slice(base.length) || "/";
+              }
+            }
+            const fileCandidates =
+              clean === "/"
+                ? ["/index.html"]
+                : [clean, clean + "/index.html", clean + ".html"];
             const exists =
               fileCandidates.some((c) => paths.has(c)) || dirs.has(clean);
             if (!exists) {
@@ -157,7 +176,8 @@ function caseSensitiveLinkChecker() {
 }
 
 export default defineConfig({
-  site: "https://v2.alchemy.run",
+  site,
+  base,
   prefetch: true,
   trailingSlash: "ignore",
   integrations: [
@@ -189,12 +209,11 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/alchemy-run/alchemy-effect",
+          href: `https://github.com/${githubRepository}`,
         },
       ],
       editLink: {
-        baseUrl:
-          "https://github.com/alchemy-run/alchemy-effect/edit/main/website",
+        baseUrl: `https://github.com/${githubRepository}/edit/main/website`,
       },
       sidebar: [
         { label: "What is Alchemy?", link: "/what-is-alchemy" },

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AGENT_PROMPT as PROMPT } from "./agentPrompt";
+import { withBase } from "../../site-paths";
 
 export default function HeroCta() {
   return (
@@ -7,7 +8,7 @@ export default function HeroCta() {
       <div className="hero-cta hero-cta--cards">
         <a
           className="hero-cta__card hero-cta__card--human"
-          href="/getting-started"
+          href={withBase("/getting-started")}
         >
           <span className="hero-cta__eyebrow">For humans</span>
           <span className="hero-cta__title">
@@ -18,10 +19,16 @@ export default function HeroCta() {
       </div>
       <div className="hero-cta hero-cta--simple">
         <div className="hero-cta__buttons">
-          <a className="alc-btn alc-btn--primary" href="/getting-started">
+          <a
+            className="alc-btn alc-btn--primary"
+            href={withBase("/getting-started")}
+          >
             Get started <span aria-hidden>→</span>
           </a>
-          <a className="alc-btn alc-btn--secondary" href="/tutorial/part-1">
+          <a
+            className="alc-btn alc-btn--secondary"
+            href={withBase("/tutorial/part-1")}
+          >
             Tutorial
           </a>
         </div>

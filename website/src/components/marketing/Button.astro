@@ -10,10 +10,14 @@ interface Props {
 }
 
 const { variant = "primary", icon, href = "#", class: className } = Astro.props;
+const resolvedHref =
+  href.startsWith("/") && !href.startsWith("//")
+    ? `${import.meta.env.BASE_URL.replace(/\/$/, "")}${href}` || "/"
+    : href;
 ---
 
 <a
-  href={href}
+  href={resolvedHref}
   class:list={["alc-btn", `alc-btn--${variant}`, className]}
 >
   {icon === "github" && (
