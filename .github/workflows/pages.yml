@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - codex/alchemy-convex-docs-first
     paths:
       - "website/**"
       - "packages/alchemy/**"
