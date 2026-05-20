@@ -1,15 +1,21 @@
 ---
 title: Convex Overview
-description: Understand what Alchemy owns, what Convex owns, and how the planned Convex integration fits together.
+description: Understand what Alchemy owns, what Convex owns, and how the Convex integration fits together.
 sidebar:
   order: 90
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: the core provider resources, Convex Plain, Alchemy Convex,
+> Alchemy Convex Runtime, Confect package surfaces, and generic DSL component installs
+> exist in source. The implementation now also includes the generic
+> `Convex.Component` resource, promoted component wrappers, auth declaration
+> resources, migration codegen, test helpers, HTTP adapters, and deployment
+> admin actions, typed runtime/admin error classification, plus
+> team invitation/member-role resources from the public Management API.
 
 ## Overview
 
-Alchemy's planned Convex integration is not just "run `convex deploy`
+Alchemy's Convex integration is not just "run `convex deploy`
 from another tool." It is a combined infrastructure and application
 workflow:
 
@@ -28,15 +34,35 @@ The result is one stack that can describe cloud resources,
 application code, generated files, secrets, and rollout policy
 without pretending Alchemy replaces Convex itself.
 
+## The doctrine
+
+The Convex integration follows the same five rules everywhere:
+
+| Rule | What it means in the Convex stack |
+| --- | --- |
+| Declarations are data | `Convex.Project`, `Convex.Deployment`, `Convex.Component`, `App.make(...)`, and `defineMigrations(...)` describe desired state first. |
+| I/O is Effects | Handlers, deployers, runtime calls, and admin calls return `Effect`, not ad hoc `Promise` helpers. |
+| Boundaries decode with Effect Schema | DSL args/returns/errors, runtime envelopes, deployment API responses, and generated manifests are all schema-decoded before user code trusts them. |
+| Failures are typed | Domain failures use `Schema.TaggedErrorClass`; Convex transport failures become `Convex.FunctionError`, `Convex.HttpError`, or `Convex.ProtocolError`. |
+| Dependencies are Layers | `Convex.providers()`, promoted component `.layer(...)` helpers, and runtime services such as `DatabaseReader` or `ConvexClient` all compose through `Layer`. |
+
+That is the best-practice mental model to keep in your head:
+
+- deploy declarations stay boring and reviewable,
+- runtime logic stays inside Effects,
+- schemas guard every edge,
+- typed failures keep domain errors separate from transport errors,
+- Layers make dependencies explicit in production and replaceable in tests.
+
 ## The core stack shape
 
-Plain Convex uses standard Convex files. Alchemy DSL + Files and Alchemy DSL + Runtime add a typed DSL.
+Convex Plain uses standard Convex files. Alchemy Convex and Alchemy Convex Runtime add a typed DSL.
 All four modes share the same infrastructure core:
 
 ```ts
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Convex from "@alchemy/convex";
+import * as Convex from "alchemy/Convex";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -59,14 +85,98 @@ export default Alchemy.Stack(
 );
 ```
 
-The package names and APIs above are planned. The important contract is
-the shape:
+The core package names and APIs above are implemented in this source tree:
 
 - `Convex.Project` models the control-plane project.
 - `Convex.Deployment` models the live Convex deployment and exposes the
   URL, origin, and deploy/admin capabilities that later resources use.
+- `Convex.CustomDomain` attaches `convexCloud` or `convexSite`
+  domains to deployments through the current Management API.
+- `Convex.CanonicalUrl` sets or unsets the canonical `CONVEX_CLOUD_URL`
+  or `CONVEX_SITE_URL` for a deployment through the Deployment API.
 - `Convex.providers()` is the provider layer that makes those resources
   available to the stack.
+
+## Source-backed examples
+
+These examples all map to APIs that exist in the current source tree.
+
+### Deploy declarations
+
+```ts
+const project = yield* Convex.Project("App", { slug: "my-app" });
+const deployment = yield* Convex.Deployment("Prod", {
+  project,
+  type: "prod",
+});
+
+yield* Convex.EnvironmentVariable("SiteUrl", {
+  deployment,
+  name: "SITE_URL",
+  value: "https://example.com",
+});
+```
+
+### Runtime calls
+
+```ts
+const convex = yield* Convex.ConvexClient;
+const client = yield* convex(deployment);
+
+const notes = yield* client.query("notes:list", { limit: 10 });
+```
+
+### Admin calls
+
+```ts
+const admin = yield* Convex.DeploymentAdmin;
+const info = yield* admin.getDeploymentInfo({
+  deploymentUrl: "https://calm-cat-123.convex.cloud",
+});
+```
+
+### Component declarations and component runtime calls
+
+```ts
+yield* Convex.Component("rag", {
+  source: { package: "@convex-dev/rag", version: "^0.1.0" },
+  env: { OPENAI_API_KEY: Redacted.make(process.env.OPENAI_API_KEY!) },
+  httpPrefix: "/rag",
+});
+
+const allowed = yield* client.query(
+  "lib:limit",
+  { name: "failedLogins" },
+  { componentPath: "rateLimiter" },
+);
+```
+
+### Migration declarations
+
+```ts
+const migrations = defineMigrations(
+  (m) => [
+    m.online("20260519_user_display_name", {
+      table: schema.tables.users,
+      strategy: "dual-write",
+      expand: {
+        summary: "writers fill both fields during rollout",
+      },
+      migrateOne: (user) =>
+        Effect.succeed(
+          user.displayName === undefined
+            ? { displayName: user.name }
+            : {},
+        ),
+    }),
+  ],
+  {
+    phase: "backfill",
+    run: "wait",
+    dryRunFirst: true,
+  },
+);
+```
 
 ## What Alchemy owns
 
@@ -75,11 +185,12 @@ composition story.
 
 | Surface | Owned by | What that means |
 | --- | --- | --- |
-| Project and deployment lifecycle | Alchemy | Create, adopt, read, update, and delete planned Convex resources through provider lifecycles. |
+| Project and deployment lifecycle | Alchemy | Create, adopt, read, update, and delete Convex resources through provider lifecycles. |
 | Deploy orchestration | Alchemy | Decide whether deployment happens via `convex deploy`, generated files, or the experimental runtime push protocol. |
+| One-shot admin work | Alchemy Actions | Run snapshot export/import and similar command-shaped work only when resolved inputs change or `--force` is set. |
 | Environment variable resources | Alchemy | Converge deployment env vars, redact secrets in state, and show plan output clearly. |
 | Host bindings | Alchemy | Bind Convex into Cloudflare Workers, Lambda functions, and other host runtimes without leaking management credentials into runtime code. |
-| Codegen ownership contract | Alchemy | Define which generated files are safe to overwrite, which files are merge-managed, and how drift is checked in CI. |
+| Codegen ownership contract | Alchemy | Define which generated files are safe to overwrite, which user files are left alone, and how drift is checked in CI. |
 | Component installation metadata | Alchemy | Install components, pass env and HTTP mount options, and expose typed wrappers where Alchemy adds value. |
 | Migration rollout policy | Alchemy | Model expand, backfill, and contract as an operational workflow rather than a one-off script. |
 
@@ -103,9 +214,9 @@ component may be installed by Alchemy, but its runtime tables and
 state transitions are still part of the Convex app, not separate cloud
 resources.
 
-## Why Alchemy DSL + Files is the default
+## Why Alchemy Convex is the default
 
-Alchemy DSL + Files, `@alchemy/convex-dsl` plus `@alchemy/convex-files`, is the
+Alchemy Convex, `@alchemy/convex` plus `@alchemy/convex-files`, is the
 recommended default because it is the best compromise between type
 safety and operational transparency:
 
@@ -115,26 +226,28 @@ safety and operational transparency:
   drift explicit instead of editing user files with markers.
 - Convex's own CLI still performs the final deploy, so teams keep the
   familiar daily workflow and benefit from Convex's proven toolchain.
-- Moving between Alchemy DSL + Files and Alchemy DSL + Runtime is designed to be a deployer
+- Moving between Alchemy Convex and Alchemy Convex Runtime is designed to be a deployer
   swap, not a complete rewrite.
 
-Plain Convex is the least disruptive upgrade for existing Convex apps.
-Alchemy DSL + Runtime is the most ambitious option, but it is explicitly
+Convex Plain is the least disruptive upgrade for existing Convex apps.
+Alchemy Convex Runtime is the most ambitious option, but it is explicitly
 experimental because it pushes directly to Convex's deploy protocol.
 Confect Adapter exists to support Confect users without forcing them onto the
 new DSL on day one.
 
 ## How the pieces fit together
 
-The planned integration has five big surfaces that work together:
+The integration has five big surfaces that work together:
 
 | Surface | Role in the system |
 | --- | --- |
-| Deploy resources | `Convex.Project`, `Convex.Deployment`, `Convex.EnvironmentVariable`, `Convex.CustomDomain`, `Convex.Bundle`, and related resources manage control-plane state. |
-| Authoring mode | Picks how application code is authored and deployed: Plain Convex, Alchemy DSL + Files, Alchemy DSL + Runtime, or Confect Adapter. |
-| Components | Install Convex Components generically and promote selected ones to typed Effect-native wrappers. |
-| Auth | Add JWT providers, Convex Auth, or Better Auth as planned higher-level resources that generate or validate the right Convex files and env surface. |
-| Migrations | Treat schema and data rollout as a sequence with explicit gates: expand, backfill, verify, contract. |
+| Deployment resources | `Convex.Project`, `Convex.Deployment`, `Convex.EnvironmentVariable`, `Convex.CustomDomain`, `Convex.CanonicalUrl`, and related resources manage durable control-plane state. |
+| Deployment actions | `Convex.Bundle`, `Convex.SnapshotExport`, and `Convex.SnapshotImport` run as Alchemy Actions, not resource lifecycles. |
+| Authoring mode | Picks how application code is authored and deployed: Convex Plain, Alchemy Convex, Alchemy Convex Runtime, or Confect Adapter. |
+| Components | Install Convex Components generically through DSL codegen or the core `Convex.Component` declaration resource, and use promoted wrappers where Alchemy adds typed Effect-native services. |
+| Auth | Add JWT providers, Convex Auth, or Better Auth as declaration resources that produce the right generated-file, env, route, and component metadata without persisting secret values. |
+| Migrations | Treat schema and data rollout as source-controlled expand, backfill, verify, and contract metadata, with generated `@convex-dev/migrations` modules. |
+| Error handling | Encode declared domain failures as `ConvexError.data` and classify Convex HTTP/runtime failures as typed Effect errors. |
 
 In practice the flow looks like this:
 
@@ -152,16 +265,16 @@ In practice the flow looks like this:
 
 ## Convex docs map
 
-Use the concept pages to understand the product contract:
+Use the concept pages to understand the current ownership model:
 [modes](/convex/concepts/authoring-modes),
 [generated files](/convex/concepts/generated-files),
 [components](/convex/concepts/components), and the
 [security model](/convex/concepts/security-model).
 
 Use the guides for implementation-facing design details:
-[Plain Convex](/convex/guides/quickstart),
+[Convex Plain](/convex/guides/quickstart),
 [the recommended app quickstart](/convex/guides/app-quickstart),
-[Alchemy DSL + Runtime](/convex/guides/runtime-experimental),
+[Alchemy Convex Runtime](/convex/guides/runtime-experimental),
 [Confect migration](/convex/guides/migrating-from-confect),
 [migrations](/convex/guides/migrations),
 [auth](/convex/guides/auth),
@@ -182,10 +295,23 @@ Use the recipes for operational rollout examples:
 [Better Auth on Cloudflare](/convex/recipes/better-auth-cloudflare), and
 [dynamic tenant crons](/convex/recipes/dynamic-tenant-crons).
 
-## Planned, not implemented
+## Implementation Status
 
-These docs intentionally describe the target product before the package
-implementation exists. When a snippet references planned APIs such as
-`Convex.Project`, `Convex.Component`, or `defineMigrations`, treat it as
-the contract the implementation should satisfy, not as code you can run
-today.
+Core resources such as `Convex.Project`, `Convex.Deployment`,
+`Convex.CustomDomain`, `Convex.CanonicalUrl`, `Convex.EnvironmentVariable`,
+`Convex.ProjectEnvVar`, `Convex.DeployKey`,
+`Convex.PreviewDeployKey`, `Convex.PersonalAccessToken`,
+`Convex.CustomRole`,
+`Convex.App`, `Convex.Component`, `Convex.TeamInvite`,
+`Convex.TeamMember`, deployment actions including `Convex.Bundle`,
+the four package-mode
+surfaces, `defineComponentUse(...)`, promoted
+`*.layer(...)` / `*.install(...)` wrappers,
+`defineMigrations(...)`,
+`TestConvex.layer(...)`, `ConvexRuntimeTransport`, typed
+`Convex.FunctionError` / `Convex.HttpError` classification, and the raw-clock
+ESLint guardrail exist in source.
+The auth resources currently model declaration metadata for generated files,
+routes, components, packages, and env values; the deployment helpers consume
+the app/compiler surfaces explicitly rather than silently taking over every
+user-owned auth file.

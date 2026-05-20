@@ -15,6 +15,21 @@
       "path": "./packages/alchemy/tsconfig.test.json"
     },
     {
+      "path": "./packages/convex/tsconfig.json"
+    },
+    {
+      "path": "./packages/convex-dsl/tsconfig.json"
+    },
+    {
+      "path": "./packages/convex-files/tsconfig.json"
+    },
+    {
+      "path": "./packages/convex-runtime/tsconfig.json"
+    },
+    {
+      "path": "./packages/convex-confect/tsconfig.json"
+    },
+    {
       "path": "./packages/better-auth/tsconfig.json"
     },
     {

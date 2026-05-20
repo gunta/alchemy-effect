@@ -17,6 +17,7 @@ const config = {
   tsConfig: path.join(import.meta.dir, "../packages/alchemy/tsconfig.json"),
   excludeFile(baseName: string): boolean {
     if (baseName === "index.ts") return true;
+    if (baseName === "Shared.ts") return true;
     if (/^[a-z]/.test(baseName)) return true;
     return false;
   },
@@ -226,7 +227,12 @@ function findPrimaryJSDoc(sourceFile: SourceFile): ParsedJSDoc {
     if (!decl.isExported()) continue;
     const init = decl.getInitializerIfKind(SyntaxKind.CallExpression);
     const expr = init?.getExpression().getText();
-    if (expr === "Resource" || expr === "Host" || expr === "Platform") {
+    if (
+      expr === "Resource" ||
+      expr === "Action" ||
+      expr === "Host" ||
+      expr === "Platform"
+    ) {
       const stmt = decl.getVariableStatement();
       if (stmt) {
         const jsdoc = parseJSDoc(stmt);
@@ -381,7 +387,11 @@ function isResourceFile(sourceFile: SourceFile): boolean {
     }
   }
 
-  if (fullText.includes("@resource") || fullText.includes("@binding"))
+  if (
+    fullText.includes("@resource") ||
+    fullText.includes("@action") ||
+    fullText.includes("@binding")
+  )
     return true;
 
   const text = sourceFile.getFullText();
@@ -402,12 +412,22 @@ function isResourceFile(sourceFile: SourceFile): boolean {
     const init = decl.getInitializerIfKind(SyntaxKind.CallExpression);
     if (!init) continue;
     const expr = init.getExpression().getText();
-    if (expr === "Resource" || expr === "Host" || expr === "Platform")
+    if (
+      expr === "Resource" ||
+      expr === "Action" ||
+      expr === "Host" ||
+      expr === "Platform"
+    )
       return true;
     const innerCall = init.getExpression();
     if (Node.isCallExpression(innerCall)) {
       const innerExpr = innerCall.getExpression().getText();
-      if (innerExpr === "Resource" || innerExpr === "Host") return true;
+      if (
+        innerExpr === "Resource" ||
+        innerExpr === "Action" ||
+        innerExpr === "Host"
+      )
+        return true;
     }
   }
   for (const iface of sourceFile.getInterfaces()) {
@@ -417,14 +437,18 @@ function isResourceFile(sourceFile: SourceFile): boolean {
       .flatMap((clause) => clause.getTypeNodes())
       .some((typeNode) => {
         const expr = typeNode.getExpression().getText();
-        return expr === "Resource" || expr === "Host";
+        return expr === "Resource" || expr === "Action" || expr === "Host";
       });
     if (hasResourceHeritage) return true;
   }
   for (const typeAlias of sourceFile.getTypeAliases()) {
     if (!typeAlias.isExported()) continue;
     const typeText = typeAlias.getTypeNode()?.getText() ?? "";
-    if (typeText.startsWith("Resource<") || typeText.startsWith("Host<")) {
+    if (
+      typeText.startsWith("Resource<") ||
+      typeText.startsWith("Action<") ||
+      typeText.startsWith("Host<")
+    ) {
       return true;
     }
   }
@@ -436,11 +460,27 @@ function parseFile(sourceFile: SourceFile, relativePath: string): PageDoc {
   const primary = findPrimaryJSDoc(sourceFile);
 
   return {
-    title: baseName,
+    title: humanizeTitle(baseName),
     relativePath,
     summary: primary.summary,
     sections: primary.sections,
   };
+}
+
+function humanizeTitle(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\bJwt\b/g, "JWT")
+    .replace(/\bOidc\b/g, "OIDC")
+    .replace(/\bUrl\b/g, "URL")
+    .replace(/\bDns\b/g, "DNS")
+    .replace(/\bApi\b/g, "API")
+    .replace(/\bR2\b/g, "R2")
+    .replace(/\bS3\b/g, "S3")
+    .replace(/\bSqs\b/g, "SQS")
+    .replace(/\bDynamodb\b/g, "DynamoDB")
+    .replace(/\bIam\b/g, "IAM")
+    .replace(/\bVpc\b/g, "VPC");
 }
 
 function yamlString(value: string): string {
@@ -539,7 +579,7 @@ async function main() {
   }
 
   console.log(
-    `Done. Wrote ${written} resource pages to ${normalizeSlashes(path.relative(path.join(import.meta.dir, ".."), config.outRoot))}.`,
+    `Done. Wrote ${written} API pages to ${normalizeSlashes(path.relative(path.join(import.meta.dir, ".."), config.outRoot))}.`,
   );
 }
 

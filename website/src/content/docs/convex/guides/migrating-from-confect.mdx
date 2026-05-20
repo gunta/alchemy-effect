@@ -5,9 +5,9 @@ sidebar:
   order: 93
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: the Confect bridge exists in source as `@alchemy/convex-confect`, including `fromConfect(...)`, `ConfectDeployer`, and the convenience `App(...)` construct.
 
-This guide covers **Confect Adapter** and the planned migration path
+This guide covers **Confect Adapter** and the migration path
 from a Confect-authored Convex app to the Alchemy Convex DSL.
 
 There are two separate goals you might have:
@@ -15,7 +15,7 @@ There are two separate goals you might have:
 1. keep Confect for now, but let Alchemy manage deployment and
    surrounding infrastructure
 2. gradually move from Confect's authoring model into
-   `@alchemy/convex-dsl`
+   `@alchemy/convex`
 
 The design supports both. You do **not** need to rewrite everything
 in one step.
@@ -28,18 +28,22 @@ If your Confect app already works, the lowest-risk path is:
 - let Confect do its build/codegen step
 - let Alchemy wrap the deploy as a resource
 
-That is the purpose of the planned `@alchemy/convex-confect`
-deployer.
+That is the purpose of the `@alchemy/convex-confect` deployer.
 
 ```ts
 // alchemy.run.ts
 import { App } from "@alchemy/convex-confect";
+import * as Convex from "alchemy/Convex";
 import confectApp from "./confect/app";
 
-const backend = yield* App("Backend", {
-  app: confectApp,
-  project: "notes-app",
+const project = yield* Convex.Project("Project", { slug: "notes-app" });
+const deployment = yield* Convex.Deployment("Dev", {
+  project,
   type: "dev",
+});
+const backend = yield* App("Backend", {
+  deployment,
+  source: { app: confectApp },
 });
 ```
 
@@ -51,17 +55,17 @@ forcing an immediate authoring migration.
 Confect and the Alchemy DSL are close enough that several concepts
 translate directly.
 
-| Confect | `@alchemy/convex-dsl` |
+| Confect | `@alchemy/convex` |
 | --- | --- |
-| `DatabaseSchema.make().addTable(...)` | `defineSchema({ ... })` |
-| `Table.make("notes", schema)` | `table(schema)` under key `notes` |
-| `FunctionSpec.publicQuery` | `query.spec(...)` or `query(...)` |
-| `GroupSpec.make("notes")` | `defineGroup("notes", { ... })` |
-| `FunctionImpl.make(...)` | `spec.implement(...)` or inline `handler` |
-| `Impl.finalize(...)` | `defineApp({ groups, ... })` |
+| `DatabaseSchema.make().addTable(...)` | `DatabaseSchema.make().addTable(...)` |
+| `Table.make("notes", schema)` | `Table("notes", Schema.Struct(...))` |
+| `FunctionSpec.publicQuery` | `Query.make(...)` |
+| `GroupSpec.make("notes")` | `Group.make("notes", { ... }, { module: import.meta.url })` |
+| `FunctionImpl.make(...)` | same-named named exports from the group module via `Group.make(..., { module: import.meta.url })`, or an explicit inline `handler` |
+| `Impl.finalize(...)` | `App.make({ groups, ... })` |
 | generated refs/services | `convex/_alchemy/refs` and `convex/_alchemy/services` |
-| `@confect/react` | `@alchemy/convex-dsl/react` |
-| `@confect/test` | `@alchemy/convex-dsl/test` |
+| `@confect/react` | generated Convex refs plus your normal Convex client integration |
+| `@confect/test` | `@alchemy/convex/test` |
 
 That means a migration can usually preserve:
 
@@ -80,7 +84,7 @@ find-and-replace.
 
 ### App assembly
 
-Confect's finalize/build flow becomes `defineApp({ ... })`, which is a
+Confect's finalize/build flow becomes `App.make({ ... })`, which is a
 more explicit top-level contract for:
 
 - schema
@@ -108,13 +112,13 @@ change, not just a syntax change.
 ### Promoted components
 
 Promoted wrappers such as Better Auth, R2, and RateLimiter may replace
-custom glue you wrote around Confect or Plain Convex packages. The
+custom glue you wrote around Confect or Convex Plain packages. The
 migration is often worth it, but it is still a redesign surface.
 
-## The planned `fromConfect()` adapter
+## The `fromConfect()` adapter
 
 For teams that want a bridge instead of a rewrite, the design includes
-a planned adapter:
+an adapter:
 
 ```ts
 import { fromConfect } from "@alchemy/convex-confect";
@@ -143,9 +147,9 @@ For most teams, the safest sequence is:
 1. Wrap the existing Confect app with `@alchemy/convex-confect`.
 2. Move infrastructure concerns into Alchemy resources.
 3. Freeze the current Confect behavior with tests.
-4. Port schema definitions into `defineSchema`.
-5. Port one group at a time into `defineGroup`.
-6. Introduce `defineApp` once enough of the app has moved.
+4. Port schema definitions into `Table(...)` and `DatabaseSchema.make()`.
+5. Port one group at a time into `Group.make(..., { module: import.meta.url })`.
+6. Introduce `App.make(...)` once enough of the app has moved.
 7. Add migrations and promoted components only after the basic app is
    stable in the new model.
 
@@ -158,12 +162,13 @@ A good first target is a leaf group with minimal external coupling.
 
 For example, migrate a `notes` group like this:
 
-1. Copy the Confect table definition into `defineSchema`.
-2. Port `publicQuery` and `publicMutation` specs into `query` and
-   `mutation`.
+1. Copy the Confect table definition into `Table(...)` and
+   `DatabaseSchema.make().addTable(...)`.
+2. Port `publicQuery` and `publicMutation` specs into `Query.make(...)` and
+   `Mutation.make(...)`.
 3. Keep the same argument and return shapes.
-4. Port implementation logic into Effect handlers using generated
-   database services.
+4. Port implementation logic into same-named Effect handler exports
+   using generated database services.
 5. Compare client call sites and test outputs before touching more
    sensitive groups.
 
@@ -174,8 +179,8 @@ migrations, and component wiring into the same first step.
 
 You are ready to stop routing through Confect when:
 
-- the schema lives natively in `defineSchema`
-- the important groups live in `defineGroup`
+- the schema lives natively in `DatabaseSchema.make()`
+- the important groups live in `Group.make(..., { module: import.meta.url })`
 - client code uses the new refs/services surface
 - tests cover the migrated behavior
 - any required migrations have been declared explicitly
@@ -186,10 +191,10 @@ Alchemy manage the deployment boundary around it.
 ## Recommended destination
 
 For most migrations, the destination should be
-[Convex App Quickstart](/convex/guides/app-quickstart), not the
+[Alchemy Convex Quickstart](/convex/guides/app-quickstart), not the
 runtime deployer.
 
-Alchemy DSL + Files is the best landing zone because it:
+Alchemy Convex is the best landing zone because it:
 
 - preserves a normal file-based Convex deploy
 - makes generated ownership explicit

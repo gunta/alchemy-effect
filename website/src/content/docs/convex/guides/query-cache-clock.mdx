@@ -5,12 +5,14 @@ sidebar:
   order: 100
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: generated query wrappers provide the deterministic Effect Clock
+> boundary, and the raw-clock ESLint rule is exported from
+> `@alchemy/convex/eslint-plugin`.
 
 Convex query caching is sensitive to time access. If a query reaches for raw
 `Date.now()` or `new Date()` inside the handler body, cache behavior becomes
-harder to reason about and harder to test. The planned DSL should make the
-safe path automatic.
+harder to reason about and harder to test. The DSL makes the safe path
+automatic.
 
 ## The rule
 
@@ -28,27 +30,23 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { runtimeLayerForQuery } from "@alchemy/convex/server";
 
 const queryClockLayer = (queryStartedAt: number) =>
-  Layer.succeed(Clock.Clock, {
-    unsafeCurrentTimeMillis: () => queryStartedAt,
-    unsafeCurrentTimeNanos: () => BigInt(queryStartedAt) * 1_000_000n,
-    currentTimeMillis: Effect.sync(() => queryStartedAt),
-    currentTimeNanos: Effect.sync(() => BigInt(queryStartedAt) * 1_000_000n),
-    sleep: (duration) => Effect.sleep(duration),
-  });
+  Layer.succeed(Clock.Clock, Clock.make({ now: () => queryStartedAt }));
 
 export const runAlchemyQueryEffect = (ctx, args, handler) => {
   const layer = Layer.mergeAll(
-    DatabaseReader.layer(schema, ctx.db),
-    Auth.layer(ctx.auth),
-    StorageReader.layer(ctx.storage),
-    QueryRunner.layer(ctx.runQuery),
+    runtimeLayerForQuery(ctx),
     queryClockLayer(ctx.queryStartedAt),
-    Layer.succeed(QueryCtx, ctx),
-    Layer.succeed(ConfigProvider.ConfigProvider, ConvexConfigProvider.make()),
+    Layer.succeed(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromMap(new Map()),
+    ),
   );
-  return Effect.provide(handler(args), layer).pipe(Effect.scoped);
+  return Effect.provide(runHandler(ctx, args, handler), layer).pipe(
+    Effect.scoped,
+  );
 };
 ```
 
@@ -58,13 +56,13 @@ contract.
 
 ## ESLint guardrail
 
-The planned integration ships an ESLint rule:
+The integration ships an ESLint rule:
 
 ```txt
 @alchemy/eslint-plugin-convex/no-raw-date-now-in-query
 ```
 
-It flags these patterns inside `query(...)` handlers:
+It flags these patterns inside `Query.make(...)` handlers:
 
 | Disallowed in queries | Why |
 | --- | --- |
@@ -78,7 +76,7 @@ query-cache contract.
 ## Recommended handler style
 
 ```ts
-const listRecent = query({
+const listRecent = Query.make({
   args: Schema.Struct({}),
   returns: Schema.Array(schema.tables.notes.doc),
   handler: () =>
@@ -97,10 +95,10 @@ without editing your business logic.
 
 The Clock rule is part of a bigger runtime contract:
 
-| Guardrail | Planned behavior |
+| Guardrail | Behavior |
 | --- | --- |
 | Validators everywhere | Generated public functions validate args and returns by default |
-| Explicit auth | Public functions either declare `auth: "public"` or provide auth policy |
+| Explicit auth | Handlers can depend on `Auth.requireSignedIn()` instead of reading raw context directly |
 | Thin wrappers | Business logic stays in reusable Effect code, not in giant Convex adapters |
 | Stable env | Generated exports do not appear or disappear based on runtime env values |
 | Opt-in HTTP routes | Component routes are mounted only when `httpPrefix` is set |

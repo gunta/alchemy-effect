@@ -5,10 +5,12 @@ sidebar:
   order: 102
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `TestConvex.layer(app)` is implemented in
+> `@alchemy/convex/test`. It compiles the same app declaration used by
+> deployers and returns an injectable Effect-backed test service.
 
 Testing is one of the strongest reasons to keep the Convex integration
-Effect-native. The planned contract is that the same app bundle used for
+Effect-native. The contract is that the same app bundle used for
 production deploys should also power the main test surface.
 
 There are two test surfaces. App-level tests exercise the bundled Convex
@@ -17,26 +19,28 @@ verify lifecycle behavior against the live Convex API.
 
 ## App-level tests (the main entrypoint)
 
-`TestConvex` is planned as an Effect service. `TestConvex.layer(app)`
-returns a `Layer` that bundles `app` through the same
-`AppBundler.bundleFromApp` path that Alchemy DSL + Runtime uses in
-production, then feeds the bundle into `convex-test`. Tests `yield*` the
-service after providing the layer:
+`TestConvex.layer(app)` returns an `Effect` that bundles `app` through the
+same app compiler path used by deployers, then exposes a backend service for
+tests:
 
 ```ts
 import * as Effect from "effect/Effect";
-import { TestConvex } from "@alchemy/convex-dsl/test";
+import { TestConvex } from "@alchemy/convex/test";
 import app from "../src/convex/app";
 
-const TestBackendLive = TestConvex.layer(app);
+const TestBackend = TestConvex.layer(app);
 
-test("create + list", () =>
-  Effect.gen(function* () {
-    const t = yield* TestConvex;
-    const id = yield* t.run("notes:create", { text: "hello" });
-    const list = yield* t.run("notes:list", {});
-    expect(list).toContainEqual({ _id: id, text: "hello" });
-  }).pipe(Effect.provide(TestBackendLive)));
+test("create + list", async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const t = yield* TestBackend;
+      const id = yield* t.run("notes:create", { text: "hello" });
+      const list = yield* t.run("notes:list", {});
+      return { id, list };
+    }),
+  );
+  expect(result.list).toContainEqual({ _id: result.id, text: "hello" });
+});
 ```
 
 Tests should exercise the real generated code, not a parallel
@@ -55,20 +59,20 @@ export const TestBackendLive = TestConvex.layer(app, {
 });
 ```
 
-When `defineMigrations(...)` is present, the plan is for
-`TestConvex.layer(app)` to auto-register the migrations helper unless you
-override component registration yourself.
+When `defineMigrations(...)` is present, `TestConvex.layer(app)` can discover
+the migrations helper from compiled component metadata unless you override
+component registration yourself.
 
 ## Provider-resource tests
 
-The planned Convex provider follows the same harness that AWS and
+The Convex provider follows the same harness that AWS and
 Cloudflare resources use — `Test.make({ providers })` + `beforeAll(deploy(Stack))`.
 Use this for `Convex.Project`, `Convex.Deployment`,
 `Convex.EnvironmentVariable`, `Convex.Bundle`, and any binding tests:
 
 ```ts
 import * as Alchemy from "alchemy";
-import * as Convex from "@alchemy/convex";
+import * as Convex from "alchemy/Convex";
 import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 
@@ -114,6 +118,11 @@ in [`AiGateway.test.ts`](https://github.com/Distilled-Cloud/alchemy-effect/blob/
 | HTTP adapter | `convexHttpAction(...)` preserves Effect HttpApi semantics |
 | Component wrappers | Runtime layer behavior matches generated refs and test packages |
 | Secrets | Redacted values never leak into snapshots, logs, or generated source |
+
+For typed errors, prefer `Effect.exit(...)` and assert on the failed tagged
+value or on `Convex.FunctionError.errorKind`. Do not snapshot Convex's
+human-readable message when a structured `_tag`, `errorData`, or
+`platformCode` is available.
 
 ## Layer substitution
 

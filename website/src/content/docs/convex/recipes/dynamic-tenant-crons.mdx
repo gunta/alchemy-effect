@@ -5,7 +5,7 @@ sidebar:
   order: 15
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `Crons` exists in the promoted component catalog. Use this recipe when schedules are runtime data rather than static app declarations.
 
 Use dynamic crons only when the schedule itself is tenant or user data. Static,
 source-controlled jobs should stay on native `defineCrons`.
@@ -13,7 +13,7 @@ source-controlled jobs should stay on native `defineCrons`.
 That division matters:
 
 - `defineCrons` is still the default for fixed app jobs,
-- `Components.Crons` exists for runtime registration and cleanup,
+- `Crons` exists for runtime registration and cleanup,
 - dynamic schedules need operational cleanup because tenants can churn.
 
 ## Step 1: Keep static jobs static
@@ -21,7 +21,7 @@ That division matters:
 If every environment should run the same job on the same cadence, stay with
 native Convex cron definitions.
 
-Reach for `Components.Crons` only when you need schedules like:
+Reach for `Crons` only when you need schedules like:
 
 - one weekly digest per tenant,
 - one reminder job per customer-configured cadence,
@@ -29,13 +29,15 @@ Reach for `Components.Crons` only when you need schedules like:
 
 ## Step 2: Register a tenant cron through the wrapper
 
-`Components.Crons` is the runtime service. Inside a mutation/action
+`Crons` is the runtime service. Inside a mutation/action
 handler, `yield*` the service to get a typed client, then call
 `register` — matching how other promoted components expose
 runtime methods:
 
 ```ts
-const crons = yield* Components.Crons;
+import { Crons } from "@alchemy/convex/components/crons";
+
+const crons = yield* Crons;
 
 yield* crons.register({
   name: `tenant:${tenantId}:digest`,
@@ -117,7 +119,7 @@ renames.
 ## Step 6: Delete by name or id during cleanup
 
 When a tenant is removed or a schedule is replaced, delete the old dynamic cron
-explicitly through the wrapper. The planned API should support either stable
+explicitly through the wrapper. The API should support either stable
 name-based cleanup or deletion by returned id.
 
 Preferred cleanup order:

@@ -1,0 +1,144 @@
+{
+    "name": "@alchemy/convex",
+    "version": "0.0.0",
+    "license": "Apache-2.0",
+    "type": "module",
+    "sideEffects": false,
+    "files": ["lib", "src"],
+    "scripts": {
+        "build": "bun pm pack"
+    },
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "bun": "./src/index.ts",
+            "import": "./lib/index.js"
+        },
+        "./components": {
+            "types": "./src/components.ts",
+            "bun": "./src/components.ts",
+            "import": "./lib/src/components.js"
+        },
+        "./components/action-cache": {
+            "types": "./src/components/action-cache/index.ts",
+            "bun": "./src/components/action-cache/index.ts",
+            "import": "./lib/src/components/action-cache/index.js"
+        },
+        "./components/action-retrier": {
+            "types": "./src/components/action-retrier/index.ts",
+            "bun": "./src/components/action-retrier/index.ts",
+            "import": "./lib/src/components/action-retrier/index.js"
+        },
+        "./components/agent": {
+            "types": "./src/components/agent/index.ts",
+            "bun": "./src/components/agent/index.ts",
+            "import": "./lib/src/components/agent/index.js"
+        },
+        "./components/aggregate": {
+            "types": "./src/components/aggregate/index.ts",
+            "bun": "./src/components/aggregate/index.ts",
+            "import": "./lib/src/components/aggregate/index.js"
+        },
+        "./components/authz": {
+            "types": "./src/components/authz/index.ts",
+            "bun": "./src/components/authz/index.ts",
+            "import": "./lib/src/components/authz/index.js"
+        },
+        "./components/better-auth": {
+            "types": "./src/components/better-auth/index.ts",
+            "bun": "./src/components/better-auth/index.ts",
+            "import": "./lib/src/components/better-auth/index.js"
+        },
+        "./components/catalog": {
+            "types": "./src/components/catalog.ts",
+            "bun": "./src/components/catalog.ts",
+            "import": "./lib/src/components/catalog.js"
+        },
+        "./components/crons": {
+            "types": "./src/components/crons/index.ts",
+            "bun": "./src/components/crons/index.ts",
+            "import": "./lib/src/components/crons/index.js"
+        },
+        "./components/geospatial": {
+            "types": "./src/components/geospatial/index.ts",
+            "bun": "./src/components/geospatial/index.ts",
+            "import": "./lib/src/components/geospatial/index.js"
+        },
+        "./components/migrations": {
+            "types": "./src/components/migrations/index.ts",
+            "bun": "./src/components/migrations/index.ts",
+            "import": "./lib/src/components/migrations/index.js"
+        },
+        "./components/mux": {
+            "types": "./src/components/mux/index.ts",
+            "bun": "./src/components/mux/index.ts",
+            "import": "./lib/src/components/mux/index.js"
+        },
+        "./components/neutral-cost": {
+            "types": "./src/components/neutral-cost/index.ts",
+            "bun": "./src/components/neutral-cost/index.ts",
+            "import": "./lib/src/components/neutral-cost/index.js"
+        },
+        "./components/r2": {
+            "types": "./src/components/r2/index.ts",
+            "bun": "./src/components/r2/index.ts",
+            "import": "./lib/src/components/r2/index.js"
+        },
+        "./components/rate-limiter": {
+            "types": "./src/components/rate-limiter/index.ts",
+            "bun": "./src/components/rate-limiter/index.ts",
+            "import": "./lib/src/components/rate-limiter/index.js"
+        },
+        "./components/sharded-counter": {
+            "types": "./src/components/sharded-counter/index.ts",
+            "bun": "./src/components/sharded-counter/index.ts",
+            "import": "./lib/src/components/sharded-counter/index.js"
+        },
+        "./components/workflow": {
+            "types": "./src/components/workflow/index.ts",
+            "bun": "./src/components/workflow/index.ts",
+            "import": "./lib/src/components/workflow/index.js"
+        },
+        "./components/workpool": {
+            "types": "./src/components/workpool/index.ts",
+            "bun": "./src/components/workpool/index.ts",
+            "import": "./lib/src/components/workpool/index.js"
+        },
+        "./migrations": {
+            "types": "./src/migrations.ts",
+            "bun": "./src/migrations.ts",
+            "import": "./lib/src/migrations.js"
+        },
+        "./server": {
+            "types": "./src/server/index.ts",
+            "bun": "./src/server/index.ts",
+            "import": "./lib/src/server/index.js"
+        },
+        "./server/httpApi": {
+            "types": "./src/server/httpApi.ts",
+            "bun": "./src/server/httpApi.ts",
+            "import": "./lib/src/server/httpApi.js"
+        },
+        "./test": {
+            "types": "./src/test/index.ts",
+            "bun": "./src/test/index.ts",
+            "import": "./lib/src/test/index.js"
+        },
+        "./eslint-plugin": {
+            "types": "./src/eslint-plugin/index.ts",
+            "bun": "./src/eslint-plugin/index.ts",
+            "import": "./lib/src/eslint-plugin/index.js"
+        },
+        "./eslint-plugin/rules/no-raw-date-now-in-query": {
+            "types": "./src/eslint-plugin/rules/no-raw-date-now-in-query.ts",
+            "bun": "./src/eslint-plugin/rules/no-raw-date-now-in-query.ts",
+            "import": "./lib/src/eslint-plugin/rules/no-raw-date-now-in-query.js"
+        }
+    },
+    "dependencies": {
+        "effect": "catalog:"
+    },
+    "publishConfig": {
+        "access": "public"
+    }
+}

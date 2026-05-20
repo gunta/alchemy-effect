@@ -5,7 +5,12 @@ sidebar:
   order: 92
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: the DSL file map and `@alchemy/convex-files` sink exist in
+> source. They generate `convex/_alchemy/**` and, when components are
+> declared, a generated `convex/convex.config.ts`. Migration codegen also
+> emits `convex/_alchemy/migrations.ts`,
+> `convex/_alchemy/migrations.manifest.json`, and the stable
+> `convex/migrations.ts` re-export.
 
 ## Overview
 
@@ -13,27 +18,27 @@ The generated-file contract exists to answer a boring but critical
 question: when Alchemy and Convex both touch a repository, who owns
 which file?
 
-The planned rule is simple:
+The rule is simple:
 
 - user-authored files stay user-authored,
 - Convex-owned generated files stay Convex-owned,
-- Alchemy writes only to clearly scoped generated or merge-managed
-  locations,
+- Alchemy writes only to clearly scoped generated locations,
 - drift is reported explicitly instead of being silently repaired during
   CI checks.
 
-This page describes the target ownership model for the implementation.
+This page describes the ownership model and calls out the surfaces that
+are generated versus deliberately left to the user.
 
 ## Ownership table
 
 | Path | Owner | When it changes | Drift behavior |
 | --- | --- | --- | --- |
 | `alchemy.run.ts` and stack entrypoints | User | When you change infrastructure or app composition | Alchemy never generates or overwrites it |
-| `convex/schema.ts` in Plain Convex | User | When you edit the app schema by hand | Alchemy reads only |
-| `convex/*.ts` in Plain Convex | User | When you change handlers, routes, crons, or component wiring by hand | Alchemy reads only, except for explicitly requested scaffolds |
-| `convex/_alchemy/**` | Alchemy | When DSL codegen output changes | Overwritten on codegen; manual edits are warned on, and planned `strictDrift` mode may fail hard |
-| `convex/convex.config.ts` in Alchemy DSL + Files | Merge-managed | When component installs or typed env declarations change | Alchemy updates its generated regions; user-authored regions are preserved |
-| `convex/http.ts` in Alchemy DSL + Files | Merge-managed | When generated HTTP routes change | Alchemy merges generated route helpers and should not replace an existing router wholesale |
+| `convex/schema.ts` in Convex Plain | User | When you edit the app schema by hand | Alchemy reads only |
+| `convex/*.ts` in Convex Plain | User | When you change handlers, routes, crons, or component wiring by hand | Alchemy reads only, except for explicitly requested scaffolds |
+| `convex/_alchemy/**` | Alchemy | When DSL codegen output changes | Overwritten on codegen; manual edits are warned on by the file manifest and may be refused in strict checks |
+| `convex/convex.config.ts` in Alchemy Convex | Alchemy-generated when components are declared | When component installs or typed env declarations change | Tracked by the generated-file manifest; unowned collisions are refused unless adopted |
+| `convex/http.ts` in Alchemy Convex | Alchemy-generated when `App.make({ http })` is declared | When generated HTTP routes change | Tracked by the generated-file manifest; unowned collisions are refused unless adopted |
 | `convex/auth.ts` and `convex/auth.config.ts` | Mode-dependent | When auth mode or provider configuration changes | Ownership depends on the selected auth integration and must be documented by that mode |
 | `convex/migrations.ts` | User-facing stable re-export | When generated migration modules change | Top-level file stays a stable re-export; generated implementation lives under `_alchemy` |
 | `convex/_generated/**` | Convex CLI / Convex backend | When Convex codegen runs | Alchemy never writes here directly |
@@ -46,37 +51,49 @@ The ownership story changes by mode:
 
 | Mode | Generated files | What that means |
 | --- | --- | --- |
-| Plain Convex | None required by Alchemy | Your `convex/` directory remains a normal Convex app; Alchemy manages infra and deployment only |
-| Alchemy DSL + Files | `convex/_alchemy/**` plus merge-managed top-level files | Alchemy generates the Convex-facing modules but keeps the user-facing top-level files stable |
-| Alchemy DSL + Runtime | No on-disk Convex files required | The same codegen exists conceptually, but the sink is an in-memory file map instead of the filesystem |
+| Convex Plain | None required by Alchemy | Your `convex/` directory remains a normal Convex app; Alchemy manages infra and deployment only |
+| Alchemy Convex | `convex/_alchemy/**` plus generated top-level shims for declared DSL surfaces | Alchemy generates the Convex-facing modules and refuses unowned top-level collisions unless adopted |
+| Alchemy Convex Runtime | No on-disk Convex files required | The same codegen exists conceptually, but the sink is an in-memory file map instead of the filesystem |
 | Confect Adapter | Depends on Confect output | The Confect Adapter should respect Confect's ownership model and add Alchemy-managed deployment surfaces around it |
 
 ## The stable re-export pattern
 
-Alchemy DSL + Files avoids comment markers and large-scale file rewriting by making
-the few top-level Convex files into stable one-line handoffs:
+Alchemy Convex avoids comment markers and large-scale file
+rewriting for generated internals. The implemented compiler emits
+`convex/_alchemy/schema.ts`, `convex/_alchemy/<group>.ts`,
+`convex/_alchemy/runtime.ts`, and `convex/_alchemy/manifest.json`.
+
+When component installs exist, it also emits a complete
+`convex/convex.config.ts`:
 
 ```ts
-// convex/http.ts
-export { default } from "./_alchemy/http";
+import { defineApp } from "convex/server";
+import { v } from "convex/values";
+import rag from "@convex-dev/rag/convex.config.js";
 
-// convex/convex.config.ts
-export { default } from "./_alchemy/components";
+const app = defineApp({
+  env: {
+    OPENAI_API_KEY: v.string(),
+  },
+});
 
-// convex/schema.ts
-export { default } from "./_alchemy/schema";
+app.use(rag, {
+  name: "rag",
+  env: { OPENAI_API_KEY: app.env.OPENAI_API_KEY },
+});
 
-// convex/migrations.ts
-export * from "./_alchemy/migrations";
+export default app;
 ```
 
-These files are meant to be written once and then left alone. The
-implementation contract is that Alchemy should not require fragile
-marker comments inside user files just to keep codegen working.
+Generated top-level shims such as `convex/http.ts` and
+`convex/migrations.ts` follow the same conservative rule as
+`convex/convex.config.ts`: Alchemy writes the file only when the DSL
+declares the matching surface, tracks it in the manifest, and refuses to
+overwrite unrelated user code unless `adoptGenerated` is explicitly set.
 
 ## Drift checks
 
-`alchemy codegen --check` is the planned CI-friendly way to validate
+`alchemy codegen --check` is the intended CI-friendly way to validate
 that generated files still match the source app definition.
 
 ```txt
@@ -94,26 +111,22 @@ Check mode should:
 - make manual edits to `convex/_alchemy/**` visible immediately,
 - keep normal `alchemy codegen` as the explicit repair step.
 
-## What "merge-managed" means
+## Generated top-level files
 
-Some top-level files are neither fully generated nor fully hands-off.
-The implementation should treat them as **merge-managed**:
+Some top-level files are generated only for specific DSL surfaces. If the
+surface is not declared, Alchemy leaves the file alone. If the surface is
+declared and an unrelated file already exists at that path, the files
+deployer reports an unowned-file collision instead of silently merging or
+overwriting it.
 
-- `convex/convex.config.ts` may need generated component imports,
-  `app.use(...)` calls, and typed env declarations.
-- `convex/http.ts` may need generated route helpers for auth or other
-  managed integrations.
-- auth-related files may be user-owned or generated depending on whether
-  the chosen auth mode is raw JWT providers, Convex Auth, or Better
-  Auth.
-
-The contract is still conservative: Alchemy should merge its own
-generated surface and avoid taking over unrelated user code.
+Auth-related files may be user-owned or generated depending on whether
+the chosen auth mode is raw JWT providers, Convex Auth, or Better Auth.
+That ownership decision belongs to the selected auth integration rather
+than the generic file writer.
 
 ## Recommended workflow
 
-The planned docs and examples should recommend this operational model
-for Alchemy DSL + Files:
+The docs and examples recommend this operational model for Alchemy Convex:
 
 1. Author the app in the DSL.
 2. Run `alchemy codegen` locally.

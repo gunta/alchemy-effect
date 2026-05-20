@@ -5,7 +5,11 @@ sidebar:
   order: 93
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: the generic component install substrate exists in
+> `@alchemy/convex` as `defineComponentUse(...)`, the core
+> `Convex.Component` declaration resource exists for Convex Plain/resource
+> workflows, and promoted wrappers are available as explicit imports under
+> `@alchemy/convex/components/*`.
 
 ## Overview
 
@@ -13,32 +17,53 @@ Convex Components are not just packages. Each component can bring its
 own schema, functions, HTTP routes, environment contract, generated API,
 and test helpers. Alchemy models that shape directly.
 
-The planned integration has two layers:
+The integration has two layers:
 
-- a generic `Convex.Component` substrate that works for any component,
-- promoted wrappers for the components where Alchemy can add real type
-  safety, better runtime services, or safer operational defaults.
+- promoted component Layers for the common path: one imported package-shaped
+  value carries both the static Convex install declaration and the runtime
+  Effect service,
+- a generic DSL component substrate for components that are not promoted yet.
 
-## Generic component install
-
-The generic resource is the universal escape hatch and the foundation
-for promoted wrappers.
+That means component installation should usually feel like normal Effect
+dependency injection, not a dynamic registry. Import the promoted component,
+create a Layer, pass that same Layer to `App.make({ components })`, and
+provide it where handlers need the runtime service.
 
 ```ts
-const component = yield* Convex.Component("geospatial", {
+import { App } from "@alchemy/convex";
+import { R2 } from "@alchemy/convex/components/r2";
+
+const R2Live = R2.layer();
+
+export const app = App.make({
+  components: {
+    r2: R2Live,
+  },
+});
+```
+
+## Generic Component Install
+
+The generic DSL declaration is the universal escape hatch and the foundation
+for promoted wrappers. Reach for it when a component is not promoted yet or
+when you need a temporary upstream-specific option before Alchemy has a typed
+wrapper.
+
+```ts
+import { defineComponentUse } from "@alchemy/convex";
+
+const geospatial = defineComponentUse("geospatial", {
   source: {
     package: "@convex-dev/geospatial",
     version: "^0.2.1",
-    configExport: "@convex-dev/geospatial/convex.config.js",
   },
   name: "geospatial",
   test: "@convex-dev/geospatial/test",
 });
 ```
 
-This is planned API surface. The important design contract is that a
-component install is a real deploy-time declaration, not just a string
-added to a config file.
+The important design contract is that a component install is a real
+deploy-time declaration, not just a string added to a config file.
 
 ## `ComponentSource`
 
@@ -61,10 +86,9 @@ type ComponentSource =
 Package sources are the default for published components. Local sources
 support in-repo development or vendored components.
 
-## Planned resource shape
+## Generic Install Shape
 
-At the concept level, a component install carries six kinds of
-information:
+The implemented generic declaration carries six kinds of information:
 
 | Field | Purpose |
 | --- | --- |
@@ -78,15 +102,28 @@ information:
 That shape is intentionally close to Convex's own component model so
 Alchemy does not invent a parallel abstraction.
 
-## Generated app configuration
+## Generated App Configuration
 
 The component substrate ultimately feeds the app's generated
-`convex.config.ts`:
+`convex.config.ts`. For example, this DSL declaration:
+
+```ts
+import * as Schema from "effect/Schema";
+
+const rag = defineComponentUse("rag", {
+  source: { package: "@convex-dev/rag", version: "^1.2.3" },
+  env: { OPENAI_API_KEY: Schema.String },
+  httpPrefix: "/rag",
+  options: { limit: 10 },
+});
+```
+
+feeds the generated `convex.config.ts`:
 
 ```ts
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
-import geospatial from "@convex-dev/geospatial/convex.config.js";
+import rag from "@convex-dev/rag/convex.config.js";
 
 const app = defineApp({
   env: {
@@ -94,17 +131,48 @@ const app = defineApp({
   },
 });
 
-app.use(geospatial, {
-  name: "geospatial",
+app.use(rag, {
+  name: "rag",
+  env: { OPENAI_API_KEY: app.env.OPENAI_API_KEY },
+  httpPrefix: "/rag",
+  limit: 10,
 });
 
 export default app;
 ```
 
-Alchemy DSL + Files writes this through generated files. Alchemy DSL + Runtime synthesizes the
-same module in memory. Plain Convex may use the generic resource as a
-validated install bridge or keep authoring `convex/convex.config.ts` by
-hand.
+Alchemy Convex writes this through generated files. Alchemy Convex Runtime synthesizes the same module in memory. Convex Plain can keep
+authoring `convex/convex.config.ts` by hand, or model the same install
+metadata with `Convex.Component(...)` when it wants the component graph to
+show up as an Alchemy-managed resource.
+
+## Best-Practice Boundary
+
+The important doctrine line is:
+
+- component installs are declarations,
+- component calls are runtime Effects.
+
+`defineComponentUse(...)` and `Convex.Component(...)` build install
+metadata for the next deploy. They are not where app code performs I/O.
+Runtime calls belong in promoted component Layers or in the generic
+Convex runtime client with an explicit `componentPath`.
+
+```ts
+import * as Convex from "alchemy/Convex";
+import * as Effect from "effect/Effect";
+
+const program = Effect.gen(function* () {
+  const convex = yield* Convex.ConvexClient;
+  const client = yield* convex(deployment);
+
+  return yield* client.query(
+    "lib:limit",
+    { name: "failedLogins" },
+    { componentPath: "rateLimiter" },
+  );
+});
+```
 
 ## Promoted wrappers
 
@@ -117,7 +185,7 @@ meaningfully helpful. A promoted wrapper should provide:
 3. Generated code hooks when the component needs wrapper modules, test
    registration, or helper imports.
 
-At a high level, the planned wrapper shape looks like this:
+At a high level, the promoted wrapper metadata shape looks like this:
 
 ```ts
 interface PromotedComponentSpec {
@@ -129,33 +197,37 @@ interface PromotedComponentSpec {
 }
 ```
 
-Every promoted wrapper exposes the same two faces:
+Every promoted wrapper exposes the same faces:
 
-- a `.use(name, options)` function that returns a component install spec
-  for `defineApp({ components: [...] })`,
-- a `Components.Foo` `Context.Service` you `yield*` from a handler for
-  the runtime client.
+- a `.layer(options?)` function that returns an Effect `Layer` with component
+  install metadata attached, so the same value can be passed to
+  `App.make({ components: { ... } })` and `Effect.provide(...)`; this is the
+  primary API,
+- a metadata-only `.install(options)` escape hatch for codegen-only cases that
+  do not need a runtime service layer,
+- a `Foo` `Context.Service` you `yield*` from a handler for the
+  runtime client.
 
-That division keeps the substrate open-ended while letting Alchemy
-invest deeply in the components that matter most.
+That division keeps the substrate open-ended while making the primary promoted
+component path feel like normal Effect dependency injection.
 
-## Maturity tiers
+## Maturity Tiers
 
 Not every component should pretend to have the same level of support.
-The planned docs expose support tiers directly:
+The docs expose support tiers directly:
 
 | Tier | Meaning | Examples |
 | --- | --- | --- |
 | A - flagship | Full guide, generated code, test helper integration, Effect service, example app coverage | Migrations, Better Auth, R2, RateLimiter, Workflow, Workpool |
 | B - typed client | Generic install plus typed service and tests, but no end-to-end example app by default | Aggregate, ShardedCounter, Geospatial, Crons, ActionCache, ActionRetrier, Agent, Authz |
 | C - integration bridge | External service or scaffold heavy; docs are explicit about app-owned code and secrets | Mux, NeutralCost |
-| D - generic | Supported through `Convex.Component` only | Any component not promoted yet |
+| D - generic | Supported through `defineComponentUse(...)` only | Any component not promoted yet |
 
 Tiering is not just documentation polish. It is how the implementation
 avoids shipping wrappers that look official but are too shallow to be
 trustworthy.
 
-## Component env, HTTP, and test rules
+## Component Env, HTTP, and Test Rules
 
 The component substrate needs firm rules so generated code stays safe:
 
@@ -166,6 +238,22 @@ The component substrate needs firm rules so generated code stays safe:
 | Tests | If a component ships a test helper, the wrapper should register it through the test layer rather than requiring different production and test code paths. |
 | IDs across boundaries | Component IDs cross into app code as strings unless the wrapper can safely rebrand them. |
 | Runtime clients | Promoted wrappers expose Effect-returning services, not raw `ctx.runMutation(...)` helpers sprinkled through user code. |
+
+## Component Runtime Errors
+
+Component install metadata is deploy-time state, but component calls are normal
+runtime Effect code. Promoted runtime services should therefore follow the same
+error model as app functions:
+
+| Situation | Expected behavior |
+| --- | --- |
+| Missing local/test implementation | Fail with `Convex.ComponentClientUnavailable` |
+| Expected app or component-domain failure | Fail with a `Schema.TaggedErrorClass` value |
+| Deployed component public API call | Pass `{ componentPath }` so the runtime client calls Convex's `/api/function` endpoint |
+| Convex runtime failure | Surface as `Convex.FunctionError` with `errorKind`, `platformCode`, `retryable`, and component metadata when Convex exposes it |
+
+The goal is that component callers branch on typed Effect failures, not on
+messages scraped from Convex logs.
 
 ## Why component runtime state is not an Alchemy resource
 
@@ -200,16 +288,16 @@ visible:
 That is much stronger than merely exposing a generic `app.use(...)`
 escape hatch.
 
-## Planned compatibility posture
+## Compatibility posture
 
-The generic substrate should work for all components from day one. A
+The generic substrate works for all components first. A
 promoted wrapper is an upgrade in ergonomics and safety, not the only
 way to use a component.
 
 That matters operationally:
 
-- if a promoted wrapper lags upstream, `Convex.Component` remains the
-  escape hatch,
+- if a promoted wrapper lags upstream, `defineComponentUse(...)` remains
+  the escape hatch,
 - if a wrapper exists, it should add real value such as typed env,
   generated route handling, Effect services, or safer defaults,
 - the docs should be explicit when a wrapper is a bridge around external

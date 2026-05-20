@@ -29,6 +29,13 @@ export interface Provider<
     DeleteReq = never,
     TailReq = never,
     LogsReq = never,
+    ReadErr = any,
+    DiffErr = any,
+    PrecreateErr = any,
+    ReconcileErr = any,
+    DeleteErr = any,
+    TailErr = any,
+    LogsErr = any,
   >(
     service: Omit<
       ProviderService<
@@ -39,7 +46,14 @@ export interface Provider<
         ReconcileReq,
         DeleteReq,
         TailReq,
-        LogsReq
+        LogsReq,
+        ReadErr,
+        DiffErr,
+        PrecreateErr,
+        ReconcileErr,
+        DeleteErr,
+        TailErr,
+        LogsErr
       >,
       "Type"
     >,
@@ -51,7 +65,14 @@ export interface Provider<
     ReconcileReq,
     DeleteReq,
     TailReq,
-    LogsReq
+    LogsReq,
+    ReadErr,
+    DiffErr,
+    PrecreateErr,
+    ReconcileErr,
+    DeleteErr,
+    TailErr,
+    LogsErr
   >;
 }
 
@@ -72,6 +93,105 @@ type Props<Res extends ResourceLike> = keyof Res["Props"] extends never
   ? Res["Props"] | undefined
   : Res["Props"];
 
+export type ProviderTailInput<Res extends ResourceLike> = {
+  id: string;
+  instanceId: string;
+  props: Props<Res>;
+  output: Res["Attributes"];
+};
+
+export type ProviderLogsInput<Res extends ResourceLike> =
+  ProviderTailInput<Res> & {
+    options: LogsInput;
+  };
+
+export type ProviderReadInput<Res extends ResourceLike> = {
+  id: string;
+  instanceId: string;
+  olds: Props<Res>;
+  // what is the ARN?
+  output: Res["Attributes"] | undefined; // current state -> synced state
+};
+
+export type ProviderDiffInput<Res extends ResourceLike> = {
+  id: string;
+  instanceId: string;
+  olds: Props<Res>;
+  // Note: we do not resolve (Res["Props"]) here because diff runs during plan
+  // -> we need a way for the diff handlers to work with Outputs
+  news: Input<Props<Res>>;
+  oldBindings: BindingData<Res>;
+  newBindings: Input<BindingData<Res>>;
+  output: Res["Attributes"] | undefined;
+};
+
+export type ProviderPrecreateInput<Res extends ResourceLike> = {
+  id: string;
+  news: Props<Res>;
+  instanceId: string;
+  session: ScopedPlanStatusSession;
+  bindings: BindingData<Res>;
+};
+
+export type ProviderReconcileInput<Res extends ResourceLike> = {
+  id: string;
+  instanceId: string;
+  news: Props<Res>;
+  olds: Props<Res> | undefined;
+  output: Res["Attributes"] | undefined;
+  session: ScopedPlanStatusSession;
+  bindings: BindingData<Res>;
+};
+
+export type ProviderDeleteInput<Res extends ResourceLike> = {
+  id: string;
+  instanceId: string;
+  olds: Props<Res>;
+  output: Res["Attributes"];
+  session: ScopedPlanStatusSession;
+  bindings: BindingData<Res>;
+};
+
+export type ProviderReadResult<Res extends ResourceLike> =
+  | Res["Attributes"]
+  | undefined;
+
+export type ProviderTail<Res extends ResourceLike, Err = any, Req = never> = (
+  input: ProviderTailInput<Res>,
+) => Stream.Stream<LogLine, Err, Req>;
+
+export type ProviderLogs<Res extends ResourceLike, Err = any, Req = never> = (
+  input: ProviderLogsInput<Res>,
+) => Effect.Effect<LogLine[], Err, Req>;
+
+export type ProviderRead<Res extends ResourceLike, Err = any, Req = never> = (
+  input: ProviderReadInput<Res>,
+) => Effect.Effect<ProviderReadResult<Res>, Err, Req>;
+
+export type ProviderDiff<Res extends ResourceLike, Err = any, Req = never> = (
+  input: ProviderDiffInput<Res>,
+) => Effect.Effect<Diff | void, Err, Req>;
+
+export type ProviderPrecreate<
+  Res extends ResourceLike,
+  Err = any,
+  Req = never,
+> = (
+  input: ProviderPrecreateInput<Res>,
+) => Effect.Effect<Res["Attributes"], Err, Req>;
+
+export type ProviderReconcile<
+  Res extends ResourceLike,
+  Err = any,
+  Req = never,
+> = (
+  input: ProviderReconcileInput<Res>,
+) => Effect.Effect<Res["Attributes"], Err, Req>;
+
+export type ProviderDelete<Res extends ResourceLike, Err = any, Req = never> = (
+  input: ProviderDeleteInput<Res>,
+) => Effect.Effect<void, Err, Req>;
+
 export interface LogLine {
   timestamp: Date;
   message: string;
@@ -91,7 +211,25 @@ export interface ProviderService<
   DeleteReq = never,
   TailReq = never,
   LogsReq = never,
+  ReadErr = any,
+  DiffErr = any,
+  PrecreateErr = any,
+  ReconcileErr = any,
+  DeleteErr = any,
+  TailErr = any,
+  LogsErr = any,
 > {
+  /**
+   * Effect-native lifecycle interface for a Resource Provider.
+   *
+   * Each lifecycle hook carries its own `Req` and `Err` types so provider
+   * implementations can stay precise without forcing every call site to know
+   * the full provider-specific error taxonomy.
+   *
+   * Reconciliation follows the observe -> ensure -> sync doctrine documented
+   * on {@link reconcile}. `read` participates in adoption routing by returning
+   * attributes when the resource exists and `undefined` when it does not.
+   */
   /**
    * The version of the provider.
    *
@@ -102,58 +240,25 @@ export interface ProviderService<
    * Returns a stream of log lines for a deployed resource.
    * Used by `alchemy tail` to stream real-time logs.
    */
-  tail?(input: {
-    id: string;
-    instanceId: string;
-    props: Props<Res>;
-    output: Res["Attributes"];
-  }): Stream.Stream<LogLine, any, TailReq>;
+  tail?: ProviderTail<Res, TailErr, TailReq>;
   /**
    * Queries historical logs for a deployed resource.
    * Used by `alchemy logs` to fetch past log entries.
    */
-  logs?(input: {
-    id: string;
-    instanceId: string;
-    props: Props<Res>;
-    output: Res["Attributes"];
-    options: LogsInput;
-  }): Effect.Effect<LogLine[], any, LogsReq>;
+  logs?: ProviderLogs<Res, LogsErr, LogsReq>;
   // watch();
   // replace(): Effect.Effect<void, never, never>;
   // different interface that is persistent, watching, reloads
   // run?() {}
   // branch?() {}
-  read?(input: {
-    id: string;
-    instanceId: string;
-    olds: Props<Res>;
-    // what is the ARN?
-    output: Res["Attributes"] | undefined; // current state -> synced state
-  }): Effect.Effect<Res["Attributes"] | undefined, any, ReadReq>;
+  read?: ProviderRead<Res, ReadErr, ReadReq>;
   /**
    * Properties that are always stable across any update.
    */
   stables?: Extract<keyof Res["Attributes"], string>[];
-  diff?(input: {
-    id: string;
-    instanceId: string;
-    olds: Props<Res>;
-    // Note: we do not resolve (Res["Props"]) here because diff runs during plan
-    // -> we need a way for the diff handlers to work with Outputs
-    news: Input<Props<Res>>;
-    oldBindings: BindingData<Res>;
-    newBindings: Input<BindingData<Res>>;
-    output: Res["Attributes"] | undefined;
-  }): Effect.Effect<Diff | void, any, DiffReq>;
-  // dev?:() => Effect.Effect<void, any, DevReq>;
-  precreate?(input: {
-    id: string;
-    news: Props<Res>;
-    instanceId: string;
-    session: ScopedPlanStatusSession;
-    bindings: BindingData<Res>;
-  }): Effect.Effect<Res["Attributes"], any, PrecreateReq>;
+  diff?: ProviderDiff<Res, DiffErr, DiffReq>;
+  // dev?:() => Effect.Effect<void, unknown, DevReq>;
+  precreate?: ProviderPrecreate<Res, PrecreateErr, PrecreateReq>;
   /**
    * Reconciles the desired state of a Resource with the live cloud state.
    *
@@ -176,23 +281,8 @@ export interface ProviderService<
    * runs, the engine has confirmed (via `read` returning a non-`Unowned`
    * value, or by writing the resource itself) that mutation is safe.
    */
-  reconcile(input: {
-    id: string;
-    instanceId: string;
-    news: Props<Res>;
-    olds: Props<Res> | undefined;
-    output: Res["Attributes"] | undefined;
-    session: ScopedPlanStatusSession;
-    bindings: BindingData<Res>;
-  }): Effect.Effect<Res["Attributes"], any, ReconcileReq>;
-  delete(input: {
-    id: string;
-    instanceId: string;
-    olds: Props<Res>;
-    output: Res["Attributes"];
-    session: ScopedPlanStatusSession;
-    bindings: BindingData<Res>;
-  }): Effect.Effect<void, any, DeleteReq>;
+  reconcile: ProviderReconcile<Res, ReconcileErr, ReconcileReq>;
+  delete: ProviderDelete<Res, DeleteErr, DeleteReq>;
 }
 
 export const effect = <
@@ -205,6 +295,13 @@ export const effect = <
   DeleteReq = never,
   TailReq = never,
   LogsReq = never,
+  ReadErr = any,
+  DiffErr = any,
+  PrecreateErr = any,
+  ReconcileErr = any,
+  DeleteErr = any,
+  TailErr = any,
+  LogsErr = any,
 >(
   cls: ResourceClass<R> | Platform<R, any, any, any, any>,
   eff: Effect.Effect<
@@ -216,7 +313,14 @@ export const effect = <
       ReconcileReq,
       DeleteReq,
       TailReq,
-      LogsReq
+      LogsReq,
+      ReadErr,
+      DiffErr,
+      PrecreateErr,
+      ReconcileErr,
+      DeleteErr,
+      TailErr,
+      LogsErr
     >,
     never,
     Req
@@ -241,6 +345,13 @@ export const succeed = <
   DeleteReq = never,
   TailReq = never,
   LogsReq = never,
+  ReadErr = any,
+  DiffErr = any,
+  PrecreateErr = any,
+  ReconcileErr = any,
+  DeleteErr = any,
+  TailErr = any,
+  LogsErr = any,
 >(
   cls: ResourceClass<R> | Platform<R, any, any, any, any>,
   service: ProviderService<
@@ -251,7 +362,14 @@ export const succeed = <
     ReconcileReq,
     DeleteReq,
     TailReq,
-    LogsReq
+    LogsReq,
+    ReadErr,
+    DiffErr,
+    PrecreateErr,
+    ReconcileErr,
+    DeleteErr,
+    TailErr,
+    LogsErr
   >,
 ): Layer.Layer<
   Provider<R>,

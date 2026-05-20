@@ -5,50 +5,56 @@ sidebar:
   order: 98
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: the promoted wrappers for Workpool, Workflow, Action Retrier, and
+> Action Cache are exported as explicit modules under
+> `@alchemy/convex/components/*` with install metadata and Effect service
+> tags.
 
 Convex has multiple ways to run background or durable work, and they solve
-different problems. The planned Alchemy wrappers keep those distinctions
+different problems. The Alchemy wrappers keep those distinctions
 visible instead of collapsing everything into a single queue abstraction.
 
 ## Choose the right component
 
 | Wrapper | Use it for | Do not use it for |
 | --- | --- | --- |
-| `Components.Workpool` | Bounded parallelism and job queue style fan-out | Long-lived deterministic workflows |
-| `Components.Workflow` | Multi-step durable flows with status and event history | High-volume fire-and-forget job ingestion |
-| `Components.ActionRetrier` | One idempotent action that may need retries | Rich orchestration across many steps |
-| `Components.ActionCache` | Reusing expensive action results behind a TTL | Query or mutation result caching |
+| `Workpool` | Bounded parallelism and job queue style fan-out | Long-lived deterministic workflows |
+| `Workflow` | Multi-step durable flows with status and event history | High-volume fire-and-forget job ingestion |
+| `ActionRetrier` | One idempotent action that may need retries | Rich orchestration across many steps |
+| `ActionCache` | Reusing expensive action results behind a TTL | Query or mutation result caching |
 
 ## Workpool
 
-`Components.Workpool` is the queue primitive for bounded parallelism. Like
+`Workpool` is the queue primitive for bounded parallelism. Like
 every promoted component, it has two faces:
 
-- `Components.Workpool.use(...)` returns a component install spec that you
-  hand to `defineApp({ components: [...] })`. It is a plain value, not an
-  Effect.
-- `Components.Workpool` is an Effect service you `yield*` from a handler
+- `Workpool.layer(...)` returns an Effect Layer with component
+  install metadata attached. Pass the same value to
+  `App.make({ components: { ... } })` and `Effect.provide(...)`.
+- `Workpool` is an Effect service you `yield*` from a handler
   to enqueue jobs and read status.
 
 Declare the install in the app file:
 
 ```ts
 import * as Duration from "effect/Duration";
-import { Components } from "@alchemy/convex-dsl/components";
+import { Workpool } from "@alchemy/convex/components/workpool";
 
-const imageWork = Components.Workpool.use("imageWork", {
-  maxParallelism: 20,
-  retryActionsByDefault: false,
-  defaultRetryBehavior: {
-    maxAttempts: 5,
-    initialBackoff: Duration.millis(250),
-    base: 2,
+const ImageWorkLive = Workpool.layer({
+  name: "imageWork",
+  options: {
+    maxParallelism: 20,
+    retryActionsByDefault: false,
+    defaultRetryBehavior: {
+      maxAttempts: 5,
+      initialBackoff: Duration.millis(250),
+      base: 2,
+    },
   },
 });
 ```
 
-Planned service surface:
+Service surface:
 
 | Method | Purpose |
 | --- | --- |
@@ -62,33 +68,35 @@ Important rules:
 
 - Retry should stay explicit unless `retryActionsByDefault` is deliberately
   enabled.
-- `maxParallelism: 0` is the planned pause switch.
+- `maxParallelism: 0` is the pause switch.
 - Completion handlers are generated Convex functions, not ad hoc runtime callbacks.
 
 ## Workflow
 
-`Components.Workflow` is for long-running deterministic flows that need
+`Workflow` is for long-running deterministic flows that need
 status, restart, cancel, and event control.
 
 Declare a typed handle alongside the implementation. `.ref<...>()` is a
 type-only helper that names the workflow and its arg/return types:
 
 ```ts
-const OnboardUser = Components.Workflow.ref<
+import { Workflow } from "@alchemy/convex/components/workflow";
+
+const OnboardUser = Workflow.ref<
   { userId: string },
   { completedAt: number }
 >("onboardUser", internal.workflows.onboardUser);
 ```
 
-Inside a mutation/action handler, `yield* Components.Workflow` to get the
+Inside a mutation/action handler, `yield* Workflow` to get the
 service, then call `start`:
 
 ```ts
-const workflow = yield* Components.Workflow;
+const workflow = yield* Workflow;
 yield* workflow.start(OnboardUser, { userId }, { idempotencyKey: userId });
 ```
 
-Planned service methods: `start`, `status`, `cancel`, `restart`,
+Service methods: `start`, `status`, `cancel`, `restart`,
 `sendEvent`, `createEvent`, `list`, `listSteps`, and `cleanup`.
 
 Workflow caveats:
@@ -100,25 +108,29 @@ Workflow caveats:
 
 ## Action Retrier
 
-Use `Components.ActionRetrier` when the unit of work is still "one action",
+Use `ActionRetrier` when the unit of work is still "one action",
 but it needs retry policy and durable status. Install it on the app:
 
 ```ts
-const actionRetrier = Components.ActionRetrier.use("actionRetrier", {
-  defaults: {
-    initialBackoff: Duration.millis(250),
-    base: 2,
-    maxFailures: 4,
-    idempotency: "required",
+import { ActionRetrier } from "@alchemy/convex/components/action-retrier";
+
+const ActionRetrierLive = ActionRetrier.layer({
+  name: "actionRetrier",
+  options: {
+    defaults: {
+      initialBackoff: Duration.millis(250),
+      base: 2,
+      maxFailures: 4,
+      idempotency: "required",
+    },
   },
 });
 ```
 
-Then `yield* Components.ActionRetrier` inside the handler to call `run`,
+Then `yield* ActionRetrier` inside the handler to call `run`,
 `status`, etc.
 
-Planned methods: `run`, `runAt`, `runAfter`, `status`, `cancel`, and
-`cleanup`.
+Service methods: `run`, `status`, and `cancel`.
 
 The docs should keep one rule front and center: retried actions must define
 an idempotency policy because Convex actions are free to perform external side
@@ -126,21 +138,26 @@ effects.
 
 ## Action Cache
 
-`Components.ActionCache` is a typed cache for expensive action results.
+`ActionCache` is a typed cache for expensive action results.
 Install one entry per cached action:
 
 ```ts
-const embeddingsCache = Components.ActionCache.use("embeddingsCache", {
-  action: internal.embeddings.embed,
-  name: "embed-v1",
-  ttl: Duration.days(7),
+import { ActionCache } from "@alchemy/convex/components/action-cache";
+
+const EmbeddingsCacheLive = ActionCache.layer({
+  name: "embeddingsCache",
+  options: {
+    action: internal.embeddings.embed,
+    cacheName: "embed-v1",
+    ttl: Duration.days(7),
+  },
 });
 ```
 
-`yield* Components.ActionCache` in an action handler to `fetch`, `remove`,
-`removeAllForName`, or `removeAll`.
+`yield* ActionCache` in an action handler to `get`, `set`,
+`invalidate`, or `invalidateAll`.
 
-Planned methods: `fetch`, `remove`, `removeAllForName`, and `removeAll`.
+Service methods: `get`, `set`, `invalidate`, and `invalidateAll`.
 
 Important caveats:
 

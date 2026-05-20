@@ -148,6 +148,24 @@
       "worker": "./src/Cloudflare/*/index.ts",
       "import": "./lib/Cloudflare/*/index.js"
     },
+    "./Convex": {
+      "types": "./lib/Convex/index.d.ts",
+      "bun": "./src/Convex/index.ts",
+      "worker": "./src/Convex/index.ts",
+      "import": "./lib/Convex/index.js"
+    },
+    "./Convex/Auth": {
+      "types": "./lib/Convex/Auth/index.d.ts",
+      "bun": "./src/Convex/Auth/index.ts",
+      "worker": "./src/Convex/Auth/index.ts",
+      "import": "./lib/Convex/Auth/index.js"
+    },
+    "./Convex/*": {
+      "types": "./lib/Convex/*.d.ts",
+      "bun": "./src/Convex/*.ts",
+      "worker": "./src/Convex/*.ts",
+      "import": "./lib/Convex/*.js"
+    },
     "./Drizzle": {
       "types": "./lib/Drizzle/index.d.ts",
       "bun": "./src/Drizzle/index.ts",

@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { pipeArguments } from "effect/Pipeable";
 import { SingleShotGen } from "effect/Utils";
@@ -92,11 +93,21 @@ export const isYieldableEffectLike = (
 export type UnwrapEffect<T> =
   T extends Effect.Effect<infer A, any, any> ? A : T;
 
-export type ToEffectInterface<T> = {
+export class EffectInterfaceError extends Data.TaggedError(
+  "EffectInterfaceError",
+)<{
+  readonly method: string;
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+export type ToEffectInterface<T, Err = EffectInterfaceError> = {
   raw: T;
 } & {
   [K in keyof T]: T[K] extends (...args: any[]) => any
-    ? (...args: Parameters<T[K]>) => Effect.Effect<Awaited<ReturnType<T[K]>>>
+    ? (
+        ...args: Parameters<T[K]>
+      ) => Effect.Effect<Awaited<ReturnType<T[K]>>, Err>
     : T[K];
 };
 
@@ -107,7 +118,16 @@ export const toEffectInterface = <T extends object>(raw: T) =>
       Object.entries(raw).map(([key, value]) => [
         key,
         typeof value === "function"
-          ? (...args: any[]) => Effect.tryPromise(async () => value(...args))
+          ? (...args: any[]) =>
+              Effect.tryPromise({
+                try: () => value(...args),
+                catch: (cause) =>
+                  new EffectInterfaceError({
+                    method: key,
+                    message: `${key} failed`,
+                    cause,
+                  }),
+              })
           : value,
       ]),
     ),

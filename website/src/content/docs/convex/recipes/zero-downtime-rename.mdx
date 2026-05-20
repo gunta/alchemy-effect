@@ -5,7 +5,7 @@ sidebar:
   order: 10
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `defineMigrations(...)` and migration plan validation exist in `@alchemy/convex`. Use this recipe as rollout guidance for the implemented migration model.
 
 Use this recipe when a document field needs a real production rename, not a
 big-bang rewrite. The safe shape is always the same:
@@ -23,7 +23,7 @@ For the underlying migration model, see
 
 This playbook assumes:
 
-- you are using the planned `defineMigrations` wrapper,
+- you are using the `defineMigrations` wrapper,
 - the rename can be expressed as dual-write plus backfill,
 - you are willing to keep the old field alive until verify is clean.
 
@@ -38,7 +38,7 @@ records the expand, verify, and contract intent in source control.
 ```ts
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { defineApp, defineMigrations } from "@alchemy/convex-dsl";
+import { defineApp, defineMigrations } from "@alchemy/convex";
 
 const migrations = defineMigrations((m) => [
   m.online("20260519_user_display_name", {
@@ -49,9 +49,9 @@ const migrations = defineMigrations((m) => [
     expand: {
       summary: "displayName is optional; writers fill both name and displayName",
       requires: [
-        m.schemaField("users", "displayName").optional(Schema.String),
-        m.writer("users").writes(["name", "displayName"]),
-        m.reader("users").reads("name"),
+        m.schemaField(schema.tables.users, "displayName").optional(Schema.String),
+        m.writer(schema.tables.users).writes(["name", "displayName"]),
+        m.reader(schema.tables.users).reads("name"),
       ],
     },
     migrateOne: (user) =>
@@ -67,15 +67,15 @@ const migrations = defineMigrations((m) => [
       summary: "all readers and writers use displayName only",
       after: "completed",
       requires: [
-        m.reader("users").reads("displayName"),
-        m.writer("users").writes(["displayName"]),
-        m.noRemaining("users", "displayName"),
+        m.reader(schema.tables.users).reads("displayName"),
+        m.writer(schema.tables.users).writes(["displayName"]),
+        m.noRemaining(schema.tables.users, "displayName"),
       ],
     },
   }),
 ]);
 
-export default defineApp({ schema, groups, migrations });
+export default App.make({ module: import.meta.url, schema, groups, migrations });
 ```
 
 The important part is not the rename itself. It is that `expand`,

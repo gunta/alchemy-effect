@@ -5,10 +5,10 @@ sidebar:
   order: 97
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `R2` exists in the promoted component catalog. Bucket CORS and Cloudflare credential provisioning may still require explicit Cloudflare-side resources or manual setup.
 
-`Components.R2` should stay close to the official `@convex-dev/r2`
-component. Alchemy should provision and wire the infrastructure around it, not
+`R2` stays close to the official `@convex-dev/r2`
+component. Alchemy provisions and wires the infrastructure around it, not
 replace the upstream API with a new storage dialect.
 
 The split is:
@@ -30,37 +30,43 @@ The split is:
 | `new R2(components.r2)` | Generated Convex app helper |
 | App auth for uploads and deletes | Your application code |
 
-Generated code must not publish unauthenticated upload, read, sync, or delete
+Generated code does not publish unauthenticated upload, read, sync, or delete
 endpoints by default.
 
-## Planned API
+## Current Layer Shape
 
 ```ts
+import * as Schema from "effect/Schema";
+import { R2 } from "@alchemy/convex/components/r2";
+
 const bucket = yield* Cloudflare.R2Bucket("Uploads", {
   name: "uploads",
 });
 
-const uploads = yield* Components.R2("uploads", {
-  component: "r2",
-  bucket,
-  credentials: {
-    accessKeyId: Config.redacted("R2_ACCESS_KEY_ID"),
-    secretAccessKey: Config.redacted("R2_SECRET_ACCESS_KEY"),
-    token: Config.redacted("R2_TOKEN"),
+const UploadsR2Live = R2.layer({
+  name: "uploads",
+  env: {
+    R2_BUCKET: Schema.String,
+    R2_ENDPOINT: Schema.String,
+    R2_ACCESS_KEY_ID: Schema.String,
+    R2_SECRET_ACCESS_KEY: Schema.String,
+    R2_TOKEN: Schema.String,
   },
-  endpoint: Config.string("R2_ENDPOINT"),
-  cors: {
-    allowedOrigins: ["https://app.example.com"],
-    allowedMethods: ["GET", "PUT"],
-    allowedHeaders: ["Content-Type"],
-  },
-  client: {
-    module: "files",
-    exposeClientApi: {
-      checkReadKey: "requireFileRead",
-      checkUpload: "requireFileUpload",
-      checkDelete: "requireFileDelete",
-      onUpload: "afterFileUpload",
+  options: {
+    bucket,
+    cors: {
+      allowedOrigins: ["https://app.example.com"],
+      allowedMethods: ["GET", "PUT"],
+      allowedHeaders: ["Content-Type"],
+    },
+    client: {
+      module: "files",
+      exposeClientApi: {
+        checkReadKey: "requireFileRead",
+        checkUpload: "requireFileUpload",
+        checkDelete: "requireFileDelete",
+        onUpload: "afterFileUpload",
+      },
     },
   },
 });
@@ -73,7 +79,7 @@ Convex code that uses the upstream package.
 
 ## Generated Convex code
 
-Alchemy should generate the same shape the component README recommends:
+Alchemy generates the same shape the component README recommends:
 
 ```ts
 // convex/files.ts
@@ -150,7 +156,7 @@ component keeps metadata for all buckets in one table, indexed by bucket name.
 1. Provision the bucket with `Cloudflare.R2Bucket(...)`.
 2. Configure bucket CORS for the app origins that need browser uploads.
 3. Add secret credentials and derive the plain endpoint and bucket env.
-4. Install `Components.R2(...)`.
+4. Add `R2.layer(...)` to the app's component map.
 5. Generate the upstream-shaped `new R2(components.r2)` helper.
 6. Expose authenticated functions through `clientApi<DataModel>()`.
 7. Verify codegen drift in CI before deploy.

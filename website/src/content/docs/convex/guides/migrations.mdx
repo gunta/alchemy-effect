@@ -5,10 +5,13 @@ sidebar:
   order: 94
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `defineMigrations(...)`, migration plan validation,
+> `@convex-dev/migrations` component auto-install, generated migration
+> modules, and migration manifest output are implemented in
+> `@alchemy/convex`.
 
 Convex migrations are the most important place where the Alchemy
-integration should be safer than "run a script and hope". The planned
+integration should be safer than "run a script and hope". The
 `defineMigrations` API models the full rollout, not only the backfill:
 
 1. Expand the schema and readers/writers so old and new documents both work.
@@ -18,6 +21,20 @@ integration should be safer than "run a script and hope". The planned
 If you are migrating production data, this is the default path we want
 teams to reach for first.
 
+## Migrations are declarations first
+
+`defineMigrations(...)` returns deploy-time metadata. It is not the
+backfill itself. The declaration tells Alchemy and Convex:
+
+- which rollout steps exist,
+- which invariants must hold before each phase,
+- which runtime callbacks (`migrateOne`, `patch`, `verify`) should be
+  generated into the Convex app,
+- which operational mode the deploy should follow.
+
+That split is the core best practice: the rollout policy is data, while
+the per-document work still runs as Effects inside Convex.
+
 ## The rollout model
 
 The flagship API is `m.online(...)`. It records rollout intent in source
@@ -25,10 +42,9 @@ control, generates the underlying `@convex-dev/migrations` functions, and
 gives `alchemy plan` enough metadata to block unsafe contract deploys.
 
 ```ts
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { defineApp, defineMigrations } from "@alchemy/convex-dsl";
+import { defineApp, defineMigrations } from "@alchemy/convex";
 
 const migrations = defineMigrations((m) => [
   m.online("20260519_user_display_name", {
@@ -39,9 +55,9 @@ const migrations = defineMigrations((m) => [
     expand: {
       summary: "displayName is optional and writers fill both fields",
       requires: [
-        m.schemaField("users", "displayName").optional(Schema.String),
-        m.writer("users").writes(["name", "displayName"]),
-        m.reader("users").reads("name"),
+        m.schemaField(schema.tables.users, "displayName").optional(Schema.String),
+        m.writer(schema.tables.users).writes(["name", "displayName"]),
+        m.reader(schema.tables.users).reads("name"),
       ],
     },
     migrateOne: (user) =>
@@ -57,16 +73,21 @@ const migrations = defineMigrations((m) => [
       summary: "all readers and writers use displayName only",
       after: "completed",
       requires: [
-        m.reader("users").reads("displayName"),
-        m.writer("users").writes(["displayName"]),
-        m.noRemaining("users", "displayName"),
+        m.reader(schema.tables.users).reads("displayName"),
+        m.writer(schema.tables.users).writes(["displayName"]),
+        m.noRemaining(schema.tables.users, "displayName"),
       ],
     },
   }),
 ]);
 
-export default defineApp({ schema, groups, migrations });
+export default App.make({ module: import.meta.url, schema, groups, migrations });
 ```
+
+Use `schema.tables.users` in both `table` and requirement helpers. The
+builder still accepts plain table-name strings for compatibility, but
+table objects let TypeScript reject misspelled fields in `schemaField`,
+`writer`, `reader`, `noRemaining`, and `patch(..., { removes })`.
 
 For lightweight maintenance work, the same module also supports:
 
@@ -78,7 +99,7 @@ For lightweight maintenance work, the same module also supports:
 
 ## What gets generated
 
-Alchemy DSL + Files writes the migration implementation to
+Alchemy Convex writes the migration implementation to
 `convex/_alchemy/migrations.ts` and expects your stable
 `convex/migrations.ts` re-export to forward it. Function names stay in the
 `migrations:*` namespace, so operational commands are predictable.
@@ -100,42 +121,38 @@ export const runPending = migrations.runner([
 ]);
 ```
 
-Generated migration functions are internal by default. The planned docs do
-not generate public write surfaces for backfills.
+Generated migration functions are internal by default. Alchemy does not
+generate public write surfaces for backfills.
 
 ## Deploy modes
 
-The deployer accepts migration instructions on the deployer-specific
-`App(...)` helper, such as `@alchemy/convex-files` for Alchemy DSL + Files or
-`@alchemy/convex-runtime` for Alchemy DSL + Runtime. The production-safe
-default is `phase: "manual"` — Alchemy deploys the migration functions but
-does not run them. It prints the exact `convex run` commands so an operator
-can decide when to backfill:
+The compiler records migration instructions in the generated manifest. A
+deployer can use that manifest to choose whether to stop at codegen, print
+operator commands, or start a backfill. The production-safe default is
+`phase: "manual"`: deploy the migration functions but do not run them until
+an operator explicitly starts the backfill.
 
 ```ts
 const backend = yield* App("Backend", {
-  app,
-  project: "my-app",
-  type: "prod",
-  migrations: {
-    phase: "manual",
-    production: {
-      allowContract: false,
-      requireCleanVerify: true,
-    },
-  },
+  deployment,
+  source: { app },
 });
 ```
 
-To opt into a backfill that Alchemy starts and waits on:
+To opt into a backfill that Alchemy starts and waits on, set the
+migration plan on `defineMigrations(...)` itself:
 
 ```ts
-migrations: {
-  phase: "backfill",
-  run: "wait",
-  dryRunFirst: true,
-  timeout: Duration.minutes(30),
-},
+const migrations = defineMigrations(
+  (m) => [
+    // ...
+  ],
+  {
+    phase: "backfill",
+    run: "wait",
+    dryRunFirst: true,
+  },
+);
 ```
 
 | Mode | What Alchemy does |

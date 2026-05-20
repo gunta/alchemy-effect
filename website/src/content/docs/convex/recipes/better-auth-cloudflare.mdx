@@ -5,9 +5,9 @@ sidebar:
   order: 14
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `Convex.Auth.BetterAuth` exists in source and models the deploy-time files, env, component install, and generated route metadata for this recipe.
 
-This is the production recipe for the highest-level planned auth integration:
+This is the production recipe for the highest-level auth integration:
 
 - Cloudflare hosts the frontend,
 - Convex hosts the backend and generated auth routes,
@@ -24,20 +24,23 @@ Inside the `Alchemy.Stack` `Effect.gen` body, redacted secrets are passed as
 ```ts
 const auth = yield* Convex.Auth.BetterAuth("Auth", {
   siteUrl: "https://app.example.com",
+  convexSiteUrl: "https://app.convex.site",
   secret: Config.redacted("BETTER_AUTH_SECRET"),
   basePath: "/api/auth",
-  providers: {
-    github: {
-      clientId: Config.redacted("GITHUB_CLIENT_ID"),
+  providers: [
+    {
+      id: "github",
+      clientIdEnv: "GITHUB_CLIENT_ID",
       clientSecret: Config.redacted("GITHUB_CLIENT_SECRET"),
     },
-  },
+  ],
 });
 ```
 
-This higher-level resource should generate the Better Auth instance, auth
-configuration, route registration, and provider env wiring, while still leaving
-you one user-owned seam such as `createAuthOptions(ctx)`.
+This higher-level resource generates the Better Auth instance, auth
+route registration, and provider env wiring. Product-specific Better Auth
+plugin choices stay in your app declaration rather than in deployment
+credentials.
 
 ## Step 2: Set the required production env values
 
@@ -80,10 +83,10 @@ HTTP
 
 Expected generated surfaces:
 
-- `convex/auth.config.ts`
+- `convex/_alchemy/betterAuth.ts`
 - `convex/betterAuth/auth.ts`
-- `convex/betterAuth/convex.config.ts` in local-component mode
-- merge-managed route registration in `convex/http.ts`
+- `convex/auth.ts`
+- generated route registration in `convex/http.ts`
 
 ## Step 4: Configure OAuth callback URLs
 
@@ -140,11 +143,12 @@ rules still apply.
 
 ## Route ownership contract
 
-The docs contract for this integration is:
+The route ownership contract for this integration is:
 
 - generated `/api/auth/*` routes exist only when a high-level auth resource
   explicitly owns them,
-- `convex/http.ts` is merge-managed, not replaced wholesale,
+- `convex/http.ts` is generated only when the auth/HTTP surface declares it,
+  and unowned collisions are refused unless adopted,
 - `convex/_alchemy/**` is Alchemy-owned,
 - Better Auth config still keeps one user-owned seam for provider options and
   plugins.

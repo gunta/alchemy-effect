@@ -5,7 +5,7 @@ sidebar:
   order: 103
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: use this checklist for the current Convex integration surfaces. Where a provider capability is still dashboard-only or manual, the checklist calls that out as an operational precondition.
 
 Use this page as the final preflight before a production Convex deploy managed
 by Alchemy. The goal is not to create ceremony for its own sake. The goal is
@@ -15,8 +15,8 @@ secrets.
 
 ## 1. Credentials and target
 
-- Confirm which mode you are deploying: Plain Convex, Alchemy DSL + Files,
-  Alchemy DSL + Runtime, or Confect Adapter.
+- Confirm which mode you are deploying: Convex Plain, Alchemy Convex,
+  Alchemy Convex Runtime, or Confect Adapter.
 - Confirm whether the target is hosted Convex or self-hosted Convex.
 - Verify the deploy-time credential source before plan or deploy:
 
@@ -36,8 +36,8 @@ Run the drift check before production:
 alchemy codegen --check
 ```
 
-If this fails, stop and resolve the mismatch before deploy. The planned check
-mode should print exact drift instead of silently rewriting files:
+If this fails, stop and resolve the mismatch before deploy. The check mode
+prints exact drift instead of silently rewriting files:
 
 ```txt
 convex/_alchemy/schema.ts drifted
@@ -105,7 +105,23 @@ Components
   + install @convex-dev/rate-limiter as components.rateLimiter
 ```
 
-## 6. Migration gates
+## 6. Typed errors and retry posture
+
+Expected failures should be reviewable without parsing log strings.
+
+| Check | Why it matters |
+| --- | --- |
+| Declared domain errors | Handlers use `Schema.TaggedErrorClass` plus `error:` so app failures round-trip as `ConvexError.data` |
+| Runtime failure classes | Callers branch on `Convex.FunctionError.errorKind` such as `application`, `write-conflict`, or `read-write-limit` |
+| HTTP/admin failures | Operational code reads `Convex.HttpError.code`, `platformCode`, and `retryable` |
+| Components | Promoted runtime services fail through Effect, including `Convex.ComponentClientUnavailable` for missing local/test methods |
+
+Only retry errors whose typed metadata says they are retryable or whose
+provider lifecycle explicitly models eventual consistency. Do not retry
+validator failures, missing functions, or declared domain errors as if they
+were transient infrastructure failures.
+
+## 7. Migration gates
 
 If the deploy includes `defineMigrations(...)`, review the phase carefully.
 
@@ -123,7 +139,7 @@ convex run migrations:runPending '{}'
 convex run migrations:verifyUserDisplayName '{}'
 ```
 
-## 7. Logs, privacy, and redaction
+## 8. Logs, privacy, and redaction
 
 Verify that:
 
@@ -133,7 +149,7 @@ Verify that:
 - deploy-time credentials never enter runtime bundles,
 - component env and auth callbacks do not accidentally expose sensitive values.
 
-## 8. Backup and rollback posture
+## 9. Backup and rollback posture
 
 | Situation | What to decide before deploy |
 | --- | --- |
@@ -151,7 +167,7 @@ Rollback notes:
 - For Better Auth, rotating secrets may require a staged deployment where both
   old and new provider settings are accepted briefly.
 
-## 9. Final go/no-go
+## 10. Final go/no-go
 
 Ship when all of these are true:
 
@@ -159,6 +175,8 @@ Ship when all of these are true:
 - `alchemy plan` reads like the intended operational checklist.
 - Generated public routes are intentional and reviewed.
 - Required secrets exist and are current.
+- Domain, runtime, and HTTP errors are typed well enough that rollback or
+  retry code does not parse strings.
 - Migration phase matches the rollout you actually want.
 - Component version drift, if any, is understood.
 

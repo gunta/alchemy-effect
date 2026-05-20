@@ -5,9 +5,11 @@ sidebar:
   order: 101
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: self-host credentials and deployment-scoped admin surfaces are
+> modeled in the Convex provider. Hosted-only team/dashboard resources remain
+> unavailable in self-host mode.
 
-The Convex provider is planned to support self-host mode without pretending
+The Convex provider supports self-host mode without pretending
 the hosted Convex control plane still exists. The rule is simple:
 
 - Deployment-scoped resources should keep working.
@@ -18,7 +20,7 @@ the hosted Convex control plane still exists. The rule is simple:
 
 ```ts
 import * as Alchemy from "alchemy";
-import * as Convex from "@alchemy/convex";
+import * as Convex from "alchemy/Convex";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -53,7 +55,7 @@ CONVEX_SELF_HOSTED_URL
 CONVEX_SELF_HOSTED_ADMIN_KEY
 ```
 
-The planned credential shape — values are pulled via `effect/Config` so
+The credential shape — values are pulled via `effect/Config` so
 they never appear in checked-in code:
 
 ```ts
@@ -69,28 +71,32 @@ import * as Config from "effect/Config";
 
 | Category | Status in self-host mode |
 | --- | --- |
-| Per-deployment admin resources | Supported |
-| `Convex.Bundle` / Plain Convex deploy | Supported via `convex deploy --url ... --admin-key ...` |
-| Alchemy DSL + Files file deploy | Supported; same generated files, different target |
-| Alchemy DSL + Runtime runtime push | Supported; runtime `App(...)` targets the self-host URL |
+| Per-deployment admin actions | Supported where the self-host admin API exposes the matching command |
+| `Convex.Bundle` / Convex Plain deploy | Supported via `convex deploy --url ... --admin-key ...` |
+| Alchemy Convex file deploy | Supported; same generated files, different target |
+| Alchemy Convex Runtime runtime push | Supported; runtime `App(...)` targets the self-host URL |
 | Env vars and app scaffolding | Supported |
 
 ## What is cloud-only
 
-These planned resources are skipped because they belong to the hosted Convex
-dashboard plane:
+These resources are skipped because they belong to the hosted Convex
+control plane or dashboard:
 
 | Resource | Why it is skipped |
 | --- | --- |
 | `PeriodicBackup` | Hosted control-plane feature |
 | `ManualBackup` | Hosted control-plane feature |
 | `CustomDomain` | Hosted control-plane feature |
+| `CanonicalUrl` | Hosted deployment URL feature |
 | `DeployKey` | Hosted control-plane feature |
+| `PreviewDeployKey` | Hosted control-plane feature |
+| `PersonalAccessToken` | Hosted management token feature |
 | `PreviewDeployment` | Hosted control-plane feature |
 | `SSO` | Hosted team feature |
 | `OAuthApp` | Hosted team feature |
-| `TeamInvite` | Hosted team feature |
-| `TeamMember` | Hosted team feature |
+| `TeamInvite` | Hosted team Management API feature |
+| `TeamMember` | Hosted team Management API feature |
+| `CustomRole` | Hosted team Management API feature |
 
 ## Commands
 

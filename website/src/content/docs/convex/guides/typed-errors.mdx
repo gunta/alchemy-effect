@@ -1,17 +1,26 @@
 ---
 title: Convex Typed Errors
-description: Round-trip schema-typed errors through generated Convex clients.
+description: Round-trip schema-typed application errors and classify Convex runtime failures.
 sidebar:
   order: 99
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: DSL function declarations accept `error`, generated
+> query/mutation/action wrappers convert matching Effect failures into
+> structured `ConvexError.data`, and the Alchemy runtime/admin clients expose
+> typed `Convex.FunctionError` and `Convex.HttpError` metadata. React hook
+> helpers that decode those values back into UI domain-error channels are a
+> separate client layer.
 
-The planned Convex DSL should preserve typed errors all the way from a
-handler's `Effect.fail(...)` to the generated client surface. This matters for
-application logic, testability, and good UX. A missing document should not
-arrive at the client as "some string in `ConvexError.data`" if the schema
-already knows exactly what failed.
+The Convex DSL preserves typed errors at the server boundary by threading an
+explicit `error` schema into generated wrappers. This matters for application
+logic, testability, and good UX. A missing document should not be treated like
+an infrastructure crash if the schema already knows exactly what failed.
+
+The rule is simple: expected application failures stay in the Effect error
+channel, provider and transport failures stay provider/transport errors, and
+only the generated Convex wrapper throws `ConvexError` at the final Convex
+runtime boundary.
 
 ## Define an error with Schema
 
@@ -28,7 +37,7 @@ export class NoteNotFound extends Schema.TaggedErrorClass<NoteNotFound>()(
   { noteId: schema.tables.notes.id },
 ) {}
 
-export const getOrFail = query({
+export const getOrFail = Query.make({
   args: Schema.Struct({ noteId: schema.tables.notes.id }),
   returns: schema.tables.notes.doc,
   error: NoteNotFound,
@@ -45,32 +54,96 @@ export const getOrFail = query({
 ```
 
 The key point is the explicit `error:` declaration. That gives the code
-generator a real contract for encoding and decoding failures.
+generator a real contract for deciding which handler failures are expected
+domain failures.
 
-## Planned wrapper behavior
+## Wrapper behavior
 
 | Step | Behavior |
 | --- | --- |
-| Args | Decode with the declared `args` schema |
-| Handler success | Encode with `returns` |
-| Handler failure matching `error` | Encode into `ConvexError.data` in a structured form |
+| Args | Validated by generated Convex validators from the declared `args` schema |
+| Handler success | Validated by generated Convex validators from `returns` |
+| Handler failure matching `error` | Converted into `ConvexError.data` in a structured form |
 | Unexpected failure | Surface as a developer error or defect, not as a fake typed domain error |
 
-This is the behavior the generated wrappers should implement for queries,
-mutations, and actions.
+This behavior is implemented for generated queries, mutations, and actions.
+
+Do not throw strings, plain objects, or random exceptions for expected business
+states. Model those states as `Schema.TaggedErrorClass`, fail with
+`Effect.fail(...)`, and let the wrapper encode them at the boundary.
+
+## Boundary decoding with Schema
+
+The same rule applies outside generated handlers too: Alchemy decodes
+Convex boundaries before values cross into user code.
+
+- generated wrappers validate `args`, `returns`, and declared `error`
+  schemas,
+- `ConvexRuntimeTransport` decodes the public HTTP API envelope before
+  returning a runtime value,
+- `DeploymentAdmin` decodes deployment API responses such as
+  deployment info, canonical URLs, log streams, snapshot requests, and
+  environment variables,
+- generated file manifests are decoded before the files deployer trusts
+  them as owned state.
+
+That means runtime and admin callers can stay in typed `Effect` code:
+
+```ts
+import * as Convex from "alchemy/Convex";
+import * as Effect from "effect/Effect";
+
+const program = Effect.gen(function* () {
+  const convex = yield* Convex.ConvexClient;
+  const client = yield* convex(deployment);
+
+  const allowed = yield* client.query(
+    "lib:limit",
+    { name: "failedLogins" },
+    { componentPath: "rateLimiter" },
+  );
+
+  const admin = yield* Convex.DeploymentAdmin;
+  const info = yield* admin.getDeploymentInfo({
+    deploymentUrl: "https://calm-cat-123.convex.cloud",
+  });
+
+  return { allowed, info };
+});
+```
+
+## Runtime and API error taxonomy
+
+Alchemy's Convex clients also type the errors that come back from Convex's
+runtime and HTTP APIs. Callers should branch on these fields instead of parsing
+human-readable error strings.
+
+| Source | Alchemy error | Important fields |
+| --- | --- | --- |
+| `ConvexError.data` from a generated handler | `Convex.FunctionError` | `errorKind: "application"`, `errorData`, `logLines` |
+| Convex optimistic concurrency failure | `Convex.FunctionError` | `errorKind: "write-conflict"`, `platformCode: "OCC"`, `tableName`, `documentId`, `writeSource`, `componentPath` when available |
+| Convex read/write limits | `Convex.FunctionError` | `errorKind: "read-write-limit"`, `platformCode: "PaginationLimit"` |
+| Missing function, bad validator, or invalid args/returns | `Convex.FunctionError` | `errorKind: "developer"` |
+| Convex admin or management HTTP error body | `Convex.HttpError` | `code`, `message`, `errorKind`, `platformCode`, `retryable` |
+| Invalid runtime response envelope | `Convex.ProtocolError` | `message`, `method`, `url` |
+
+The runtime client preserves component context too. Calls with
+`{ componentPath }` use Convex's component-aware `/api/function` endpoint and
+keep the component path on the typed error when Convex includes it.
 
 ## Client result shapes
 
 The exact return type depends on the client surface:
 
-| Client | Result shape |
+| Client | Current result shape |
 | --- | --- |
-| React query | Query result with typed success and domain error channels |
-| React mutation/action | Promise-based result that returns success or typed domain error |
-| Effect JS client | Effect-based result with domain, transport, and parse failures |
-| Test service | Effect-based result with domain and parse failures |
+| Generated Convex server wrapper | Throws `ConvexError.data` only for declared domain errors |
+| Alchemy runtime client | `Effect\<unknown, Convex.FunctionError \| Convex.HttpError \| Convex.ProtocolError\>` |
+| Admin and management clients | `Effect\<A, Convex.HttpError \| resource-specific typed errors\>` |
+| Test service | Effect-based service that should assert on typed failures rather than strings |
+| React helpers | Planned UI client layer that can decode `ConvexError.data` back into domain types |
 
-Exact planned signatures:
+Target UI helper signatures:
 
 ```ts
 QueryResult<A, E>                              // React query (non-Effect)
@@ -95,7 +168,7 @@ Typed errors help with:
 | Safer UI branching | Show a "note missing" state without treating it like transport failure |
 | Better tests | Assert on a tagged error value instead of snapshotting a thrown string |
 | Cleaner APIs | Keep domain errors separate from provider, parse, or transport errors |
-| Future wrappers | Promoted components can expose the same `Schema.TaggedErrorClass` model |
+| Component wrappers | Promoted components can expose the same `Schema.TaggedErrorClass` model |
 
 ## Commands
 
@@ -112,3 +185,6 @@ alchemy deploy
   domain failure surface.
 - Promoted component services should also fail with tagged errors rather than
   inventing stringly typed error payloads.
+- `Convex.FunctionError.errorKind` classifies Convex runtime failures. It does
+  not replace a function's declared domain-error schema; generated client
+  layers can decode `errorData` when they know that schema.

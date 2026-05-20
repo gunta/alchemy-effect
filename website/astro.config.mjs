@@ -221,7 +221,102 @@ export default defineConfig({
         },
         {
           label: "Convex",
-          autogenerate: { directory: "convex" },
+          items: [
+            { label: "Overview", link: "/convex" },
+            {
+              label: "Guides",
+              items: [
+                {
+                  label: "Alchemy Convex Quickstart",
+                  link: "/convex/guides/app-quickstart",
+                },
+                {
+                  label: "Convex Plain Quickstart",
+                  link: "/convex/guides/quickstart",
+                },
+                {
+                  label: "Runtime Deployer",
+                  link: "/convex/guides/runtime-experimental",
+                },
+                {
+                  label: "Migrating from Confect",
+                  link: "/convex/guides/migrating-from-confect",
+                },
+                { label: "Auth", link: "/convex/guides/auth" },
+                { label: "Migrations", link: "/convex/guides/migrations" },
+                {
+                  label: "Components",
+                  link: "/convex/guides/components-promoted",
+                },
+                { label: "Cloudflare R2", link: "/convex/guides/r2" },
+                {
+                  label: "Workflows and Jobs",
+                  link: "/convex/guides/workflows-and-jobs",
+                },
+                { label: "Typed Errors", link: "/convex/guides/typed-errors" },
+                {
+                  label: "Clock and Runtime Guardrails",
+                  link: "/convex/guides/query-cache-clock",
+                },
+                {
+                  label: "Self-Hosted Convex",
+                  link: "/convex/guides/self-host",
+                },
+                { label: "Testing", link: "/convex/guides/testing" },
+                {
+                  label: "Production Checklist",
+                  link: "/convex/guides/production-checklist",
+                },
+              ],
+            },
+            {
+              label: "Concepts",
+              items: [
+                {
+                  label: "Authoring Modes",
+                  link: "/convex/concepts/authoring-modes",
+                },
+                {
+                  label: "Generated Files",
+                  link: "/convex/concepts/generated-files",
+                },
+                { label: "Components", link: "/convex/concepts/components" },
+                {
+                  label: "Security Model",
+                  link: "/convex/concepts/security-model",
+                },
+              ],
+            },
+            {
+              label: "Recipes",
+              items: [
+                {
+                  label: "Zero-Downtime Field Rename",
+                  link: "/convex/recipes/zero-downtime-rename",
+                },
+                {
+                  label: "Rotate a Secret",
+                  link: "/convex/recipes/rotate-secret",
+                },
+                {
+                  label: "Recover a Failed Migration",
+                  link: "/convex/recipes/recover-failed-migration",
+                },
+                {
+                  label: "Mux Video Catalog",
+                  link: "/convex/recipes/mux-video-catalog",
+                },
+                {
+                  label: "Better Auth on Cloudflare",
+                  link: "/convex/recipes/better-auth-cloudflare",
+                },
+                {
+                  label: "Dynamic Tenant Crons",
+                  link: "/convex/recipes/dynamic-tenant-crons",
+                },
+              ],
+            },
+          ],
         },
         {
           label: "Concepts",

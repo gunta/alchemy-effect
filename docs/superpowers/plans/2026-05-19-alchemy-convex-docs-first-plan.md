@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **2026-05-19 status:** Superseded by the full implementation plan in `2026-05-19-alchemy-convex-full-implementation-plan.md`. The planned docs exist under `website/src/content/docs/convex/` and the current implementation pass has updated them from docs-first/planned language where the APIs now exist. Historical commit steps below are left unchecked because this work has not been split into the exact commits described here.
+
 **Goal:** Write the detailed Convex integration documentation as the product contract before implementing provider/package code.
 
 **Architecture:** Add hand-written Starlight docs under `website/src/content/docs/` that describe the planned Convex APIs, generated-file ownership, plan output, security model, and operational playbooks. Keep docs honest by marking planned APIs as planned where implementation does not exist yet, and add enough concrete code blocks that package implementation can later follow the docs.
@@ -12,7 +14,7 @@
 
 ## Scope
 
-This plan implements the docs-first pass from [the design spec](../specs/2026-05-19-alchemy-convex-design.md). It does **not** implement `@alchemy/convex`, `@alchemy/convex-dsl`, `@alchemy/convex-files`, `@alchemy/convex-runtime`, or `@alchemy/convex-confect`.
+This plan implements the docs-first pass from [the design spec](../specs/2026-05-19-alchemy-convex-design.md). It does **not** implement the `alchemy/Convex` core provider surface, `@alchemy/convex`, `@alchemy/convex-files`, `@alchemy/convex-runtime`, or `@alchemy/convex-confect`.
 
 Every new guide should include a short status note near the top:
 
@@ -31,9 +33,9 @@ Create these docs:
 - `website/src/content/docs/convex/concepts/generated-files.mdx` — generated-file ownership and drift contract.
 - `website/src/content/docs/convex/concepts/components.mdx` — generic component substrate, promoted wrappers, tiers.
 - `website/src/content/docs/convex/concepts/security-model.mdx` — credentials, env vars, HTTP routes, privacy.
-- `website/src/content/docs/convex/guides/quickstart.mdx` — Plain Convex quickstart.
-- `website/src/content/docs/convex/guides/app-quickstart.mdx` — Alchemy DSL + Files golden path.
-- `website/src/content/docs/convex/guides/runtime-experimental.mdx` — Alchemy DSL + Runtime warning and quickstart.
+- `website/src/content/docs/convex/guides/quickstart.mdx` — Convex Plain quickstart.
+- `website/src/content/docs/convex/guides/app-quickstart.mdx` — Alchemy Convex golden path.
+- `website/src/content/docs/convex/guides/runtime-experimental.mdx` — Alchemy Convex Runtime warning and quickstart.
 - `website/src/content/docs/convex/guides/migrating-from-confect.mdx` — Confect Adapter migration.
 - `website/src/content/docs/convex/guides/migrations.mdx` — migrations flagship guide.
 - `website/src/content/docs/convex/guides/auth.mdx` — JWT providers, Convex Auth, Better Auth.
@@ -117,7 +119,7 @@ Include:
 - what problem the integration solves
 - what Alchemy owns
 - what Convex owns
-- why Alchemy DSL + Files is the default
+- why Alchemy Convex is the default
 - how components, migrations, auth, and deploy resources fit together
 
 Required code block:
@@ -145,9 +147,9 @@ export default Alchemy.run("my-app", {
 
 Include the decision tree:
 
-- Plain Convex
-- Alchemy DSL + Files, recommended default
-- Alchemy DSL + Runtime, experimental
+- Convex Plain
+- Alchemy Convex, recommended default
+- Alchemy Convex Runtime, experimental
 - Confect Adapter
 
 Required table columns: `Mode`, `Best for`, `What Alchemy owns`, `What you still write`, `Risk`.
@@ -230,7 +232,7 @@ git commit -m "docs: explain convex concepts and ownership"
 - Modify: `website/src/content/docs/convex/guides/runtime-experimental.mdx`
 - Modify: `website/src/content/docs/convex/guides/migrating-from-confect.mdx`
 
-- [ ] **Step 1: Write Plain Convex quickstart**
+- [ ] **Step 1: Write Convex Plain quickstart**
 
 Show existing `convex/` app plus Alchemy-managed project/deployment/env.
 
@@ -249,7 +251,7 @@ Expected content:
 - env var resource
 - deploy and destroy commands
 
-- [ ] **Step 2: Write Alchemy DSL + Files golden path**
+- [ ] **Step 2: Write Alchemy Convex golden path**
 
 This is the most important guide. It must include:
 
@@ -274,7 +276,7 @@ const app = defineApp({
   schema,
   groups: { notes, auth },
   components: [
-    Components.RateLimiter.use("rateLimiter", {
+    RateLimiter.use("rateLimiter", {
       rates: {
         failedLogins: {
           kind: "fixed window",
@@ -288,7 +290,7 @@ const app = defineApp({
 });
 ```
 
-- [ ] **Step 3: Write Alchemy DSL + Runtime experimental guide**
+- [ ] **Step 3: Write Alchemy Convex Runtime experimental guide**
 
 Include:
 

@@ -1,0 +1,28 @@
+{
+  "name": "@alchemy/convex-runtime",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["lib", "src"],
+  "scripts": {
+    "build": "bun pm pack"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "bun": "./src/index.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "dependencies": {
+    "@alchemy/convex": "workspace:*",
+    "alchemy": "workspace:*",
+    "convex": "^1.39.1",
+    "esbuild": "0.27.0",
+    "effect": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -46,24 +46,24 @@ End-to-end AWS tutorials. Read the Lambda page first; the others bind storage an
 
 Product-contract docs for the planned Convex integration: concepts, authoring modes, component wrappers, migrations, auth, storage, jobs, testing, and operational recipes.
 
-- [Convex Overview](https://v2.alchemy.run/convex) — Planned Convex API contract: Understand what Alchemy owns, what Convex owns, and how the planned Convex integration fits together.
-- [Convex Authoring Modes](https://v2.alchemy.run/convex/concepts/authoring-modes) — Planned Convex API contract: Choose between Plain Convex, Alchemy DSL + Files, Alchemy DSL + Runtime, and Confect Adapter.
+- [Convex Overview](https://v2.alchemy.run/convex) — Planned Convex API contract: Understand what Alchemy owns, what Convex owns, and how the Convex integration fits together.
+- [Convex Authoring Modes](https://v2.alchemy.run/convex/concepts/authoring-modes) — Planned Convex API contract: Choose between Convex Plain, Alchemy Convex, Alchemy Convex Runtime, and Confect Adapter.
 - [Convex Components](https://v2.alchemy.run/convex/concepts/components) — Planned Convex API contract: Use generic Convex component installs and promoted Effect-native component wrappers from Alchemy.
 - [Convex Generated Files](https://v2.alchemy.run/convex/concepts/generated-files) — Planned Convex API contract: Learn which Convex files Alchemy owns, which files you own, and how codegen drift is handled.
 - [Convex Security Model](https://v2.alchemy.run/convex/concepts/security-model) — Planned Convex API contract: Understand deploy credentials, runtime secrets, generated HTTP routes, and privacy boundaries for Convex on Alchemy.
-- [Convex App Quickstart](https://v2.alchemy.run/convex/guides/app-quickstart) — Planned Convex API contract: Build the recommended Alchemy Convex app using the DSL and files deployer.
+- [Alchemy Convex Quickstart](https://v2.alchemy.run/convex/guides/app-quickstart) — Planned Convex API contract: Build the recommended Alchemy Convex app using the DSL and files deployer.
 - [Convex Auth](https://v2.alchemy.run/convex/guides/auth) — Planned Convex API contract: Choose between JWT auth providers, Convex Auth, and Better Auth in Alchemy.
 - [Promoted Convex Components](https://v2.alchemy.run/convex/guides/components-promoted) — Planned Convex API contract: Use the promoted Convex component wrappers with Effect services and generated code hooks.
 - [Migrating from Confect](https://v2.alchemy.run/convex/guides/migrating-from-confect) — Planned Convex API contract: Move a Confect-authored Convex app toward the Alchemy Convex DSL.
 - [Convex Migrations](https://v2.alchemy.run/convex/guides/migrations) — Planned Convex API contract: Run online Convex migrations with expand, backfill, and contract phases.
 - [Convex Production Checklist](https://v2.alchemy.run/convex/guides/production-checklist) — Planned Convex API contract: Review production readiness for Convex deployments managed by Alchemy.
 - [Convex Clock and Runtime Guardrails](https://v2.alchemy.run/convex/guides/query-cache-clock) — Planned Convex API contract: Avoid Date.now and other runtime footguns in generated Convex handlers.
-- [Convex Quickstart](https://v2.alchemy.run/convex/guides/quickstart) — Planned Convex API contract: Use Alchemy with an existing Plain Convex app.
+- [Convex Plain Quickstart](https://v2.alchemy.run/convex/guides/quickstart) — Planned Convex API contract: Use Alchemy with an existing Convex Plain app.
 - [Convex and Cloudflare R2](https://v2.alchemy.run/convex/guides/r2) — Planned Convex API contract: Install the official Convex R2 component around Alchemy-owned Cloudflare buckets.
 - [Convex Runtime Deployer](https://v2.alchemy.run/convex/guides/runtime-experimental) — Planned Convex API contract: Try the experimental runtime deployer that pushes Convex code without the Convex CLI.
 - [Self-hosted Convex](https://v2.alchemy.run/convex/guides/self-host) — Planned Convex API contract: Use Alchemy with a self-hosted Convex deployment.
 - [Testing Convex Apps](https://v2.alchemy.run/convex/guides/testing) — Planned Convex API contract: Test Alchemy-authored Convex apps with generated layers and component test helpers.
-- [Convex Typed Errors](https://v2.alchemy.run/convex/guides/typed-errors) — Planned Convex API contract: Round-trip schema-typed errors through generated Convex clients.
+- [Convex Typed Errors](https://v2.alchemy.run/convex/guides/typed-errors) — Planned Convex API contract: Round-trip schema-typed application errors and classify Convex runtime failures.
 - [Convex Workflows and Jobs](https://v2.alchemy.run/convex/guides/workflows-and-jobs) — Planned Convex API contract: Choose between Workpool, Workflow, Action Retrier, and Action Cache.
 - [Better Auth on Cloudflare with Convex](https://v2.alchemy.run/convex/recipes/better-auth-cloudflare) — Planned Convex API contract: Deploy Better Auth with a Cloudflare-hosted frontend and Convex backend.
 - [Dynamic Tenant Crons in Convex](https://v2.alchemy.run/convex/recipes/dynamic-tenant-crons) — Planned Convex API contract: Register and clean up tenant-specific runtime crons.

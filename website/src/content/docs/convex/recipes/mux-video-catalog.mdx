@@ -5,9 +5,9 @@ sidebar:
   order: 13
 ---
 
-> This page documents the planned Convex integration API. It is the product contract for the implementation pass.
+> Status: `Mux` exists in the promoted component catalog. This recipe is still an integration bridge and may need provider-side Mux setup outside Alchemy.
 
-The planned Mux wrapper is an integration bridge, not a tiny install helper.
+The Mux wrapper is an integration bridge, not a tiny install helper.
 It has to coordinate:
 
 - Convex component state,
@@ -24,15 +24,22 @@ Inside the `Alchemy.Stack` `Effect.gen` body, pass redacted secrets through
 `Config.redacted("NAME")` (from `effect/Config`):
 
 ```ts
-const mux = yield* Components.Mux("Mux", {
+import * as Schema from "effect/Schema";
+import { Mux } from "@alchemy/convex/components/mux";
+
+const MuxLive = Mux.layer({
   name: "mux",
-  tokenId: Config.redacted("MUX_TOKEN_ID"),
-  tokenSecret: Config.redacted("MUX_TOKEN_SECRET"),
-  webhookSecret: Config.redacted("MUX_WEBHOOK_SECRET"),
   httpPrefix: "/mux",
-  backfill: {
-    run: "manual",
-    includeVideoMetadata: true,
+  env: {
+    MUX_TOKEN_ID: Schema.String,
+    MUX_TOKEN_SECRET: Schema.String,
+    MUX_WEBHOOK_SECRET: Schema.String,
+  },
+  options: {
+    backfill: {
+      run: "manual",
+      includeVideoMetadata: true,
+    },
   },
 });
 ```

@@ -141,7 +141,8 @@ export type Resource<
  * The returned constructor registers the resource on the current stack,
  * resolves input props, exposes output attributes as `Output` expressions, and
  * records bindings contributed by policies and event sources. Resource
- * providers are attached separately through `.provider`.
+ * providers are attached separately through the static `.Provider` tag, whose
+ * lifecycle contract is documented in `ProviderService`.
  */
 export function Resource<R extends ResourceLike>(
   type: R["Type"],

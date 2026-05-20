@@ -80,7 +80,13 @@ async function run(
     cwd,
     stdout: "inherit",
     stderr: "inherit",
-    env: { ...process.env, ALCHEMY_NO_TUI: "1", ...env },
+    env: {
+      ...process.env,
+      ALCHEMY_NO_TUI: "1",
+      COREPACK_ENABLE_PROJECT_SPEC: "0",
+      COREPACK_ENABLE_STRICT: "0",
+      ...env,
+    },
   });
   return await proc.exited;
 }
