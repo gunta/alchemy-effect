@@ -11,11 +11,14 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { normalizePropsInput } from "alchemy/Convex/Schemas";
 import type { RuntimeBundle } from "./AppBundle.ts";
 import {
+  RuntimeBundleMetadataStringSchema,
+  RuntimeBundleMetadataStringListSchema,
   RuntimeBundleSchema,
-  RuntimeComponentDefinitionSchema,
+  RuntimeComponentDefinitionListSchema,
+  RuntimeModuleConfigListSchema,
   RuntimeModuleConfigSchema,
-  RuntimeModuleHashSchema,
-  RuntimeNodeDependencySchema,
+  RuntimeModuleHashListSchema,
+  RuntimeNodeDependencyListSchema,
 } from "./AppBundle.ts";
 
 export interface RuntimeDeploymentReference {
@@ -32,29 +35,91 @@ export type DeployApiJsonValue =
   | ReadonlyArray<DeployApiJsonValue>
   | { readonly [key: string]: DeployApiJsonValue };
 
-const DeployApiJsonValueSchema = Schema.suspend(
+const DeployApiJsonNumberSchema = Schema.Number.pipe(
+  Schema.refine((value): value is number => Number.isFinite(value), {
+    message: "JSON numbers must be finite.",
+  }),
+);
+
+export const DeployApiJsonValueSchema = Schema.suspend(
   (): Schema.Schema<DeployApiJsonValue> =>
     Schema.Union([
       Schema.Null,
       Schema.Boolean,
-      Schema.Number,
+      DeployApiJsonNumberSchema,
       Schema.String,
       Schema.Array(DeployApiJsonValueSchema),
       Schema.Record(Schema.String, DeployApiJsonValueSchema),
     ]),
 ) as Schema.Schema<DeployApiJsonValue> & Schema.Decoder<DeployApiJsonValue>;
 
-const DeployApiJsonRecordSchema = Schema.Record(
+export const DeployApiJsonRecordSchema = Schema.Record(
   Schema.String,
   DeployApiJsonValueSchema,
 );
 
 const PositiveIntSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const hasControlCharacter = (value: string) =>
+  /[\u0000-\u001F\u007F]/.test(value);
+export const RuntimeIdentityStringSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 &&
+      !/\s/.test(value) &&
+      !hasControlCharacter(value),
+    {
+      message:
+        "Runtime deployment identity fields must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+export const RuntimeAdminKeySchema = Schema.Redacted(Schema.String).pipe(
+  Schema.refine(
+    (value): value is Redacted.Redacted<string> => {
+      const adminKey = Redacted.value(value);
+      return (
+        adminKey.trim().length > 0 &&
+        !/\s/.test(adminKey) &&
+        !hasControlCharacter(adminKey)
+      );
+    },
+    {
+      message:
+        "Runtime deployment admin keys must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+export const DeploymentUrlSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string => {
+      try {
+        if (value !== value.trim() || /[\u0000-\u001F\u007F]/.test(value)) {
+          return false;
+        }
+        const url = new URL(value);
+        return (
+          (url.protocol === "http:" || url.protocol === "https:") &&
+          url.username === "" &&
+          url.password === "" &&
+          /^\/+$/.test(url.pathname) &&
+          url.search === "" &&
+          url.hash === ""
+        );
+      } catch {
+        return false;
+      }
+    },
+    {
+      message:
+        "deploymentUrl must be a valid HTTP(S) origin URL without credentials, whitespace, path, query, or hash components.",
+    },
+  ),
+);
 
 export const RuntimeDeploymentReferenceSchema = Schema.Struct({
-  deploymentName: Schema.String,
-  deploymentUrl: Schema.String,
-  adminKey: Schema.Redacted(Schema.String),
+  deploymentName: RuntimeIdentityStringSchema,
+  deploymentUrl: DeploymentUrlSchema,
+  adminKey: RuntimeAdminKeySchema,
 });
 
 const IgnoredResponseSchema = DeployApiJsonValueSchema.pipe(
@@ -82,7 +147,9 @@ export const StartPushResponseSchema = Schema.Struct({
   app: Schema.optionalKey(DeployApiJsonValueSchema),
   schemaChange: Schema.optionalKey(DeployApiJsonValueSchema),
   indexDiff: Schema.optionalKey(DeployApiJsonValueSchema),
-  externalDepsId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  externalDepsId: Schema.optionalKey(
+    Schema.NullOr(RuntimeBundleMetadataStringSchema),
+  ),
   raw: Schema.optionalKey(DeployApiJsonValueSchema),
 });
 export type StartPushResponse = Schema.Schema.Type<
@@ -275,23 +342,69 @@ export interface StartPushRequest {
   readonly forCodegen?: boolean;
 }
 
-export const StartPushRequestSchema = Schema.Struct({
-  adminKey: Schema.String,
+const StartPushRequestShapeSchema = Schema.Struct({
+  adminKey: RuntimeIdentityStringSchema,
   dryRun: Schema.Boolean,
-  functions: Schema.String,
+  functions: RuntimeBundleMetadataStringSchema,
   appDefinition: Schema.Struct({
     definition: Schema.NullOr(RuntimeModuleConfigSchema),
-    dependencies: Schema.Array(Schema.String),
+    dependencies: RuntimeBundleMetadataStringListSchema,
     schema: Schema.NullOr(RuntimeModuleConfigSchema),
-    changedModules: Schema.Array(RuntimeModuleConfigSchema),
-    unchangedModuleHashes: Schema.Array(RuntimeModuleHashSchema),
-    udfServerVersion: Schema.String,
+    changedModules: RuntimeModuleConfigListSchema,
+    unchangedModuleHashes: RuntimeModuleHashListSchema,
+    udfServerVersion: RuntimeBundleMetadataStringSchema,
   }),
-  componentDefinitions: Schema.Array(RuntimeComponentDefinitionSchema),
-  nodeDependencies: Schema.Array(RuntimeNodeDependencySchema),
-  nodeVersion: Schema.optionalKey(Schema.String),
+  componentDefinitions: RuntimeComponentDefinitionListSchema,
+  nodeDependencies: RuntimeNodeDependencyListSchema,
+  nodeVersion: Schema.optionalKey(RuntimeBundleMetadataStringSchema),
   forCodegen: Schema.optionalKey(Schema.Boolean),
 });
+const hasDisjointStartPushSingletonModulePaths = (
+  request: Schema.Schema.Type<typeof StartPushRequestShapeSchema>,
+): boolean => {
+  const singletonPaths = new Set(
+    [
+      request.appDefinition.definition?.path,
+      request.appDefinition.schema?.path,
+    ].filter((path): path is string => path !== undefined),
+  );
+  return (
+    request.appDefinition.changedModules.every(
+      (module) => !singletonPaths.has(module.path),
+    ) &&
+    request.appDefinition.unchangedModuleHashes.every(
+      (module) => !singletonPaths.has(module.path),
+    )
+  );
+};
+export const StartPushRequestSchema = StartPushRequestShapeSchema.pipe(
+  Schema.refine(
+    (
+      request,
+    ): request is Schema.Schema.Type<typeof StartPushRequestShapeSchema> => {
+      const changedPaths = new Set(
+        request.appDefinition.changedModules.map((module) => module.path),
+      );
+      return request.appDefinition.unchangedModuleHashes.every(
+        (module) => !changedPaths.has(module.path),
+      );
+    },
+    {
+      message:
+        "Convex deploy2 start_push changedModules and unchangedModuleHashes must not share paths.",
+    },
+  ),
+  Schema.refine(
+    (
+      request,
+    ): request is Schema.Schema.Type<typeof StartPushRequestShapeSchema> =>
+      hasDisjointStartPushSingletonModulePaths(request),
+    {
+      message:
+        "Convex deploy2 start_push definition/schema modules must not share paths with changedModules or unchangedModuleHashes.",
+    },
+  ),
+);
 
 export const startPushRequestFromBundle = (
   bundle: RuntimeBundle,
@@ -319,7 +432,7 @@ export const startPushRequestFromBundle = (
   });
 
 const deploy2Url = (deployment: RuntimeDeploymentReference, path: string) =>
-  `${deployment.deploymentUrl.replace(/\/$/, "")}/api/deploy2/${path}`;
+  `${deployment.deploymentUrl.replace(/\/+$/, "")}/api/deploy2/${path}`;
 
 const brotliJson = (value: unknown) =>
   Effect.sync(() =>
@@ -344,7 +457,7 @@ export const DeployApiLive = Layer.effect(
           catch: (cause) =>
             new DeployApiRequestInvalid({
               endpoint,
-              message: `Invalid request for Convex deploy2 ${endpoint}.`,
+              message: `Invalid request for Convex deploy2 ${endpoint}: ${String(cause)}`,
               cause,
             }),
         });
@@ -363,6 +476,18 @@ export const DeployApiLive = Layer.effect(
           message: `Invalid request for Convex deploy2 ${endpoint}: unsupported field${present.length === 1 ? "" : "s"} ${present.join(", ")}.`,
         });
       });
+
+    const rejectDryRunMismatch = (
+      endpoint: string,
+      actual: boolean,
+      expected: boolean,
+    ) =>
+      actual === expected
+        ? Effect.void
+        : new DeployApiRequestInvalid({
+            endpoint,
+            message: `Invalid request for Convex deploy2 ${endpoint}: dryRun must be ${expected}.`,
+          });
 
     const decodeResponse = <A>(
       schema: Schema.Decoder<A>,
@@ -497,6 +622,7 @@ export const DeployApiLive = Layer.effect(
             "start_push",
             StartPushInputSchema,
           )(input);
+          yield* rejectDryRunMismatch("start_push", decoded.dryRun, false);
           return yield* postBrotliJson(
             StartPushResponseSchema,
             decoded.deployment,
@@ -514,6 +640,7 @@ export const DeployApiLive = Layer.effect(
             "evaluate_push",
             StartPushInputSchema,
           )(input);
+          yield* rejectDryRunMismatch("evaluate_push", decoded.dryRun, true);
           return yield* postBrotliJson(
             StartPushResponseSchema,
             decoded.deployment,
@@ -549,6 +676,7 @@ export const DeployApiLive = Layer.effect(
             "finish_push",
             FinishPushInputSchema,
           )(input);
+          yield* rejectDryRunMismatch("finish_push", decoded.dryRun, false);
           return yield* postBrotliJson(
             FinishPushResponseSchema,
             decoded.deployment,
@@ -607,10 +735,15 @@ export interface DeployBundleResult {
   readonly finishPush?: FinishPushResponse;
 }
 
-export const emptyAuthDiff = { added: [], removed: [] };
-export const emptyIndexDiff = { indexes: [] };
+export const emptyAuthDiff = {
+  added: [],
+  removed: [],
+} satisfies DeployApiJsonValue;
+export const emptyIndexDiff = { indexes: [] } satisfies DeployApiJsonValue;
 
-export const indexDiffFromStartPush = (startPush: StartPushResponse) => {
+export const indexDiffFromStartPush = (
+  startPush: StartPushResponse,
+): DeployApiJsonValue => {
   const schemaChange = startPush.schemaChange;
   if (
     typeof schemaChange === "object" &&
@@ -624,7 +757,9 @@ export const indexDiffFromStartPush = (startPush: StartPushResponse) => {
       indexDiffs !== null &&
       "" in indexDiffs
     ) {
-      return (indexDiffs as Record<string, unknown>)[""] ?? emptyIndexDiff;
+      return (
+        (indexDiffs as Record<string, DeployApiJsonValue>)[""] ?? emptyIndexDiff
+      );
     }
   }
   return startPush.indexDiff ?? emptyIndexDiff;

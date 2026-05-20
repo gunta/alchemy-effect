@@ -25,6 +25,7 @@ export interface App extends Resource<
     readonly bundleHash: string;
     readonly deployedAt: string;
     readonly functionManifest: ReadonlyArray<FunctionMetadata>;
+    readonly deployerState?: unknown;
   },
   never,
   Providers
@@ -43,6 +44,7 @@ export const AppProvider = () =>
           stables: ["deploymentName", "deploymentUrl"],
           reconcile: Effect.fn("Convex.App.reconcile")(function* ({
             news,
+            output,
             session,
           }) {
             yield* session.note(
@@ -52,6 +54,7 @@ export const AppProvider = () =>
               deployment: news.deployment,
               source: news.source,
               dryRun: news.dryRun,
+              ...(output === undefined ? {} : { previous: output }),
             });
             return {
               deploymentName: news.deployment.deploymentName,
@@ -59,6 +62,9 @@ export const AppProvider = () =>
               bundleHash: result.bundleHash,
               deployedAt: result.deployedAt,
               functionManifest: result.functionManifest,
+              ...(result.deployerState === undefined
+                ? {}
+                : { deployerState: result.deployerState }),
             };
           }),
           delete: Effect.fn("Convex.App.delete")(function* () {

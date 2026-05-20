@@ -16,6 +16,12 @@ export interface DeployResult {
   readonly bundleHash: string;
   readonly deployedAt: string;
   readonly functionManifest: ReadonlyArray<FunctionMetadata>;
+  readonly deployerState?: unknown;
+}
+
+export interface PreviousDeployResult extends DeployResult {
+  readonly deploymentName: string;
+  readonly deploymentUrl: string;
 }
 
 export interface ConvexDeployer<Source = unknown, Req = never> {
@@ -24,5 +30,6 @@ export interface ConvexDeployer<Source = unknown, Req = never> {
     readonly deployment: AppDeploymentReference;
     readonly source: Source;
     readonly dryRun?: boolean;
+    readonly previous?: PreviousDeployResult;
   }): Effect.Effect<DeployResult, BundleFailed, Req>;
 }

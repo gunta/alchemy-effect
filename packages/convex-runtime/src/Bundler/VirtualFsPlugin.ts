@@ -53,8 +53,11 @@ const resolveVirtualImport = (
     `${base}.ts`,
     `${base}.tsx`,
     `${base}.js`,
+    `${base}.jsx`,
     `${base}/index.ts`,
     `${base}/index.tsx`,
+    `${base}/index.js`,
+    `${base}/index.jsx`,
   ];
   return candidates.find((candidate) => files.has(candidate));
 };

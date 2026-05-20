@@ -123,6 +123,67 @@ describe("Convex.App", () => {
     }).pipe(Effect.provide(AppProvider()));
   });
 
+  it.effect(
+    "passes previous output to deployers and stores deployer state",
+    () => {
+      const calls: unknown[] = [];
+      const deployer: ConvexDeployer<{ readonly name: string }> = {
+        _tag: "RuntimeDeployer",
+        deploy: (input) => {
+          calls.push(input);
+          return Effect.succeed({
+            bundleHash: "hash-next",
+            deployedAt: "2026-05-20T01:00:00.000Z",
+            functionManifest: [{ path: "jobs:run", kind: "action" }],
+            deployerState: { runtime: "state-next" },
+          });
+        },
+      };
+
+      return Effect.gen(function* () {
+        const provider = yield* App.Provider;
+        const previous = {
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          bundleHash: "hash-previous",
+          deployedAt: "2026-05-20T00:00:00.000Z",
+          functionManifest: [{ path: "jobs:run", kind: "action" }],
+          deployerState: { runtime: "state-previous" },
+        };
+        const attrs = yield* provider.reconcile({
+          id: "Backend",
+          instanceId: "i",
+          news: {
+            deployment,
+            source: { name: "app" },
+            deployer,
+          },
+          olds: undefined,
+          output: previous,
+          session,
+          bindings: [],
+        });
+
+        expect(attrs).toEqual({
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          bundleHash: "hash-next",
+          deployedAt: "2026-05-20T01:00:00.000Z",
+          functionManifest: [{ path: "jobs:run", kind: "action" }],
+          deployerState: { runtime: "state-next" },
+        });
+        expect(calls).toEqual([
+          {
+            deployment,
+            source: { name: "app" },
+            dryRun: undefined,
+            previous,
+          },
+        ]);
+      }).pipe(Effect.provide(AppProvider()));
+    },
+  );
+
   it.effect("rejects invalid app props before calling the deployer", () => {
     let calls = 0;
     const deployer: ConvexDeployer<unknown> = {
