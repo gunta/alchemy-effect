@@ -1,5 +1,6 @@
 ---
 import Logo from "./Logo.astro";
+import { githubRepository, withBase } from "../../site-paths";
 
 interface FooterLink {
   label: string;
@@ -32,7 +33,7 @@ const cols: FooterCol[] = [
     h: "Community",
     links: [
       { label: "Discord", href: "https://discord.gg/jwKw8dBJdN" },
-      { label: "GitHub", href: "https://github.com/alchemy-run/alchemy-effect" },
+      { label: "GitHub", href: `https://github.com/${githubRepository}` },
       { label: "X / Twitter", href: "https://x.com/alchemy_run" },
       { label: "Blog", href: "/blog" },
     ],
@@ -66,7 +67,7 @@ const cols: FooterCol[] = [
         <div class="alc-footer__heading">{col.h}</div>
         <ul class="alc-footer__list">
           {col.links.map((l) => (
-            <li><a href={l.href} class="alc-footer__link">{l.label}</a></li>
+            <li><a href={withBase(l.href)} class="alc-footer__link">{l.label}</a></li>
           ))}
         </ul>
       </div>
