@@ -1816,6 +1816,32 @@ describe("@alchemy/convex-runtime", () => {
       }),
     ));
 
+  it("rejects ambiguous HTTP route handler and api targets before runtime function manifests", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const failure = yield* AppBundler.bundleFromApp({
+          app: {
+            _tag: "App",
+            module: "/Users/demo/project/src/convex/app.ts",
+            groups: {},
+            http: {
+              _tag: "HttpDeclaration",
+              routes: {
+                "/ambiguous": {
+                  api: () => new Response("api"),
+                  handler: () => new Response("handler"),
+                },
+              },
+            },
+          } as AppDeclaration,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("http");
+        expect(String(failure)).toContain("not both");
+        expect(String(failure)).not.toContain("functionManifest");
+      }),
+    ));
+
   it("enumerates every supported runtime function manifest kind", () =>
     Effect.runPromise(
       Effect.gen(function* () {

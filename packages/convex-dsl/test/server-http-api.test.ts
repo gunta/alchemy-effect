@@ -100,5 +100,13 @@ describe("@alchemy/convex server/httpApi", () => {
         "/empty": {},
       }),
     ).toThrow(/handler or api/i);
+    expect(() =>
+      defineHttp({
+        "/ambiguous": {
+          api: () => Effect.succeed(new Response("api")),
+          handler: () => Effect.succeed(new Response("handler")),
+        },
+      }),
+    ).toThrow(/not both/i);
   });
 });

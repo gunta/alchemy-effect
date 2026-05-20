@@ -23,6 +23,15 @@ export interface HttpApiLike {
   readonly toWebHandler?: () => HttpHandlerLike;
 }
 
+type HttpApiSource = HttpApiLike | HttpHandlerLike | Function;
+
+type DecodedHttpRouteDeclaration = {
+  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  readonly api?: HttpApiSource;
+  readonly layer?: Layer.Layer<unknown, unknown, unknown>;
+  readonly handler?: HttpApiSource;
+};
+
 export interface HttpRouteDeclaration {
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly api?: unknown;
@@ -49,14 +58,17 @@ const HttpRoutePathSchema = Schema.String.pipe(
   ),
 );
 
-const isHttpApiSource = (
-  value: unknown,
-): value is HttpApiLike | HttpHandlerLike | Function =>
+const isHttpApiSource = (value: unknown): value is HttpApiSource =>
   typeof value === "function" ||
   (typeof value === "object" &&
     value !== null &&
     (("handler" in value && typeof value.handler === "function") ||
       ("toWebHandler" in value && typeof value.toWebHandler === "function")));
+
+const hasExactlyOneHttpRouteTarget = (
+  value: DecodedHttpRouteDeclaration,
+): value is DecodedHttpRouteDeclaration =>
+  (value.api === undefined) !== (value.handler === undefined);
 
 const HttpApiSourceSchema = Schema.Union([
   Schema.instanceOf(Function),
@@ -82,10 +94,10 @@ export const HttpRouteDeclarationSchema = Schema.Struct({
   layer: Schema.optionalKey(HttpLayerSchema),
   handler: Schema.optionalKey(HttpApiSourceSchema),
 }).pipe(
-  Schema.refine(
-    (value) => value.api !== undefined || value.handler !== undefined,
-    { message: "HTTP routes must provide a handler or api." },
-  ),
+  Schema.refine(hasExactlyOneHttpRouteTarget, {
+    message:
+      "HTTP routes must provide exactly one of handler or api, not both.",
+  }),
 );
 
 export const HttpDeclarationSchema = Schema.Struct({
