@@ -12,11 +12,11 @@
 
 ## Current Baseline
 
-> **2026-05-20 status:** Implemented and extended through deploy2 transport parity, deployable runtime bundling, runtime/DSL state idempotence including deploy2 definition metadata refresh, local backend lifecycle guardrails, strict persisted-state schemas, deployment-scoped module-hash reuse, source-map-aware module-hash reuse, deleted-module hash pruning, legacy AppDeploy module-hash backfill, high-level RuntimeDeployer state reuse, high-level source-map-aware module-hash reuse, high-level deleted-module hash pruning, high-level deployment-identity redeploy protection, and legacy-state backfill through `Convex.App`, deterministic Node dependency inference, sha256/size accounting validation, unique runtime identity validation, singleton module identity validation, direct deploy2 `start_push` identity-list validation, direct deploy2 dry-run endpoint guardrails, valid inferred external package versions, package-name-only external package options, nested workspace missing-package diagnostics, wildcard externalization that keeps runtime helper packages bundled, CLI-parity scoping of external packages to Node-runtime bundles only, CLI-parity peer/optional dependency expansion for externalized Node packages, first-class `nodeVersion` state threading, project-root `convex.json` runtime config ingestion, CLI-parity source-map source-content controls, CLI-parity default functions directory state, forward-compatible project config handling, local component definition deploy2 state, local component schema/function implementation state including symlinked project roots, recursive local component definition dependency graphs with CLI-style `_componentDeps` source externalization, package-backed component definition deploy2 state, package-export based component config resolution including extensionless custom exports, actionable package-config build failures, Convex CLI `convex` conditional export resolution, and Convex CLI esbuild chunking/production bundling for generated isolate and Node runtime modules plus local component definitions and implementations. The focused runtime suite now has 205 passing tests and 940 assertions. `packages/convex-runtime/src/AppDeploy.ts`, `packages/convex-runtime/src/Bundler/AppBundler.ts`, `packages/convex-runtime/src/Bundler/VirtualFsPlugin.ts`, `packages/convex-runtime/src/LocalBackend.ts`, and `packages/convex-runtime/src/index.ts` have 100% Bun source-line coverage in the focused runtime output; `AppBundle.ts` is at 99.35% line coverage with only defensive/unusual resolver and esbuild guard branches uncovered, and `DeployApi.ts` remains near-complete at 99.85% line coverage. Runtime TypeScript builds cleanly, and the broader Convex package sweep passes with 367 tests across 26 files and 1651 assertions.
+> **2026-05-20 status:** Implemented and extended through deploy2 transport parity, deployable runtime bundling, runtime/DSL state idempotence including deploy2 definition metadata refresh, dry-run idempotence, dry-run deployed-hash pruning across direct and high-level deployers, local backend lifecycle guardrails, strict persisted-state schemas, deployment-scoped module-hash reuse, source-map-aware module-hash reuse, deleted-module hash pruning, legacy AppDeploy module-hash backfill, high-level RuntimeDeployer state reuse, high-level source-map-aware module-hash reuse, high-level deleted-module hash pruning, high-level dry-run state reuse, high-level deployment-identity redeploy protection, high-level bundle-only deployer-state dropping, legacy-state backfill through `Convex.App`, high-level app state/result validation at the deployer boundary, high-level deployment-reference validation plus URL canonicalization before deployer calls, shared deployment-identity validation for App and Bundle state, deterministic Node dependency inference, sha256/size accounting validation, unique runtime identity validation, generated wrapper group/function identity validation, module-string guardrails, HTTP route path guardrails, singleton module identity validation, direct deploy2 `start_push` identity-list validation, direct deploy2 dry-run endpoint guardrails, valid inferred external package versions, package-name-only external package options, nested workspace missing-package diagnostics, hoisted and scoped hoisted package component config resolution, component source metadata guardrails, wildcard externalization that keeps runtime helper packages bundled, CLI-parity scoping of external packages to Node-runtime bundles only, CLI-parity peer/optional dependency expansion and absent optional dependency skipping for externalized Node packages, first-class `nodeVersion` state threading, project-root `convex.json` runtime config ingestion through direct and high-level deployers, direct RuntimeDeployer dry-run non-commit flow, high-level RuntimeDeployer node and bundler config ingestion, high-level hoisted external dependency inference, malformed project config guardrails, plus explicit option override parity, shared `ConvexCliLive` adapter command/hash fallback and exact deployment-target coverage, `Convex.Bundle` CLI action source-hash, strict deployment props, source path validation, dry-run/deploy-key forwarding, generated `_generated/` hash-noise exclusion, secret normalization, and malformed-state coverage, CLI-parity source-map source-content controls, CLI-parity default functions directory state, forward-compatible project config handling, local component definition deploy2 state, local component config module guardrails, extensionless fallback diagnostics, default local component config JavaScript fallback diagnostics, TypeScript-first default component config precedence, explicit TypeScript component-config import stubs, local component schema/function implementation state including symlinked project roots, recursive local component definition graphs with extensionless and CLI-style `_componentDeps` source externalization, scoped package component dependency graphs, package-backed component definition deploy2 state including package root exports that resolve to component configs, package-root `convex` conditional export dependency stubs, direct package component fallback to config-valued package-root exports, package-export based component config resolution including extensionless custom exports, actionable package-config build failures including extensionless candidate lists, Convex CLI `convex` conditional export resolution, and Convex CLI esbuild chunking/production bundling for generated isolate and Node runtime modules plus local component definitions and implementations. The focused runtime suite now has 239 passing tests and 1083 assertions. `packages/convex-runtime/src/AppDeploy.ts`, `packages/convex-runtime/src/Bundler/AppBundler.ts`, `packages/convex-runtime/src/Bundler/VirtualFsPlugin.ts`, `packages/convex-runtime/src/LocalBackend.ts`, and `packages/convex-runtime/src/index.ts` have 100% Bun source-line coverage in the focused runtime output; `AppBundle.ts` is at 99.38% line coverage with only defensive/unusual resolver and esbuild guard branches uncovered (remaining lines: 729, 1122, 1174-1176, 1314, 1427, and 1495-1497), and `DeployApi.ts` remains near-complete at 99.85% line coverage. Runtime TypeScript builds cleanly, focused high-level `Convex.App` coverage reports `packages/alchemy/src/Convex/App/ConvexApp.ts` at 100% source-line coverage, focused ControlPlane coverage reports `packages/alchemy/src/Convex/Bundle.ts` and `packages/alchemy/src/Convex/Cli.ts` at 100% source-line coverage across 19 tests and 75 assertions, and the broader Convex package sweep passes with 419 tests across 26 files and 1873 assertions.
 
-- `bun test packages/convex-runtime/test/index.test.ts --coverage` passes with 205 tests and 940 assertions.
-- `bun test packages/convex-dsl/test/index.test.ts packages/convex-runtime/test/index.test.ts --coverage` passes with 223 tests and 1023 assertions.
-- `bun test packages/convex-dsl/test/*.test.ts packages/convex-runtime/test/*.test.ts packages/convex-files/test/*.test.ts packages/convex-confect/test/*.test.ts packages/alchemy/test/Convex/*.test.ts` passes with 367 tests and 1651 assertions.
+- `bun test packages/convex-runtime/test/index.test.ts --coverage` passes with 239 tests and 1083 assertions.
+- `bun test packages/convex-dsl/test/index.test.ts packages/convex-dsl/test/server-http-api.test.ts packages/convex-runtime/test/index.test.ts --coverage` passes with 264 tests and 1190 assertions.
+- `bun test packages/convex-dsl/test/*.test.ts packages/convex-runtime/test/*.test.ts packages/convex-files/test/*.test.ts packages/convex-confect/test/*.test.ts packages/alchemy/test/Convex/*.test.ts` passes with 419 tests and 1873 assertions.
 - `bun test packages/convex-files/test/index.test.ts --coverage` passes with 17 tests and no uncovered line numbers for `packages/convex-files/src/AppCode.ts` or `packages/convex-files/src/index.ts`.
 - `bun tsc -b packages/alchemy/tsconfig.json packages/convex-dsl/tsconfig.json packages/convex-runtime/tsconfig.json packages/convex-files/tsconfig.json packages/convex-confect/tsconfig.json --force --pretty false` passes.
 - `bun run format:check` and `git diff --check` pass.
@@ -24,6 +24,8 @@
 - Deploy2 coverage now matches the installed Convex CLI transport split: `start_push`, `evaluate_push`, and `finish_push` use brotli JSON, while `wait_for_schema` and `report_push_completed` use ordinary JSON, with `finish_push` sending `message: null` and `report_push_completed` sending `{ adminKey, spans }`.
 - Deploy2 transport coverage now asserts W3C `traceparent` propagation on captured deploy2 requests.
 - Dry-run AppDeploy coverage now matches the Convex CLI by evaluating and waiting for schema, but not finishing the push and not reporting push completion telemetry.
+- Same-bundle dry-run `AppDeploy` reconciliation now has coverage proving it stays non-committal, canonicalizes the persisted deployment URL, skips deploy2 I/O, and does not add deployed module hashes.
+- Same-bundle dry-run `AppDeploy` reconciliation now prunes stale `deployedModuleHashes` from persisted dry-run state without deploy2 I/O, keeping dry-run output non-committal even after older or corrupt state.
 - Successful `AppDeploy` state now records deployed runtime module hashes and uses them on later deploys to send Convex CLI-style `unchangedModuleHashes` for stable modules while uploading only changed modules.
 - AppDeploy module-hash reuse is scoped to successful non-dry-run state and the exact deployment identity, so dry-run output or a different deployment cannot cause source to be omitted from deploy2.
 - AppDeploy module-hash reuse now treats source-map-only changes as changed modules because the Convex CLI module hash covers both `source` and `sourceMap`.
@@ -35,7 +37,10 @@
 - High-level `RuntimeDeployer` now backfills legacy state that predates deployed module hashes without deploy2 I/O when the prior deployment identity and bundle hash already match.
 - High-level `RuntimeDeployer` module-hash reuse now treats source-map-only changes as changed modules, preserving DX for `includeSourcesContent` and source-map config changes.
 - High-level `RuntimeDeployer` now prunes deleted runtime modules from persisted deployer state and does not send deleted source as changed or unchanged module metadata.
+- High-level `RuntimeDeployer` now has coverage proving same-bundle dry-run state skips deploy2 I/O, preserves the previous dry-run timestamp, canonicalizes deployment URL state, and avoids persisted module hashes.
+- High-level `RuntimeDeployer` now prunes stale `deployedModuleHashes` from same-bundle dry-run deployer state without deploy2 I/O, matching the direct `AppDeploy` non-committal dry-run contract.
 - High-level `RuntimeDeployer` now has coverage proving same-bundle state from a different deployment identity triggers a full deploy2 upload and rewrites deployer state to the target deployment, preventing backend cross-contamination.
+- High-level `RuntimeDeployer` now has coverage proving bundle-only mode drops stale deployer state, ignores prior deployed module hashes, emits a fresh bundle result, and avoids deploy2 dependencies even when an admin key is present.
 - Direct `startPush`, `evaluatePush`, and `finishPush` calls now reject contradictory `dryRun` values before HTTP I/O so low-level callers cannot accidentally rely on silently rewritten endpoint semantics.
 - Deploy2 JSON payloads now reject non-finite numbers such as `NaN` and `Infinity` before HTTP I/O, so `JSON.stringify` cannot silently coerce protocol data to `null`.
 - Schema-wait failure coverage now accepts Convex CLI-shaped `{ type: "failed", error, componentPath, tableName }` responses and preserves the `error` text on `SchemaValidationFailed.reason`.
@@ -48,6 +53,7 @@
 - Wildcard external-package bundling now keeps `convex`, `effect`, and `@alchemy/convex` bundled so inferred `nodeDependencies` only records user external packages.
 - Runtime external package options now match the Convex CLI by applying only to generated Node-runtime bundles, so isolate/browser bundles keep package imports bundled and never add them to `nodeDependencies`.
 - Externalized Node dependency inference now expands allowlisted peer and optional dependencies like the Convex CLI while keeping bundled runtime helper packages out of `nodeDependencies`.
+- Externalized Node dependency inference now skips absent optional/peer packages without failing when the primary external package is present, keeping optional package metadata ergonomic in workspaces.
 - Runtime `nodeVersion` is now a first-class AppBundler/AppBundle/RuntimeDeployer option, validated before generated wrapper compilation, included in bundle state and `bundleHash`, and forwarded into deploy2 `start_push` requests.
 - Runtime bundling now reads project-root `convex.json` config for CLI-parity `functions`, `node.externalPackages`, and `node.nodeVersion`, with explicit AppBundler/AppBundle/RuntimeDeployer options taking precedence for node options and malformed config rejected before generated wrapper compilation.
 - Runtime bundling now reads project-root `convex.json` config for CLI-parity `bundler.includeSourcesContent`, defaults source maps to omit embedded sources like the Convex CLI, lets explicit runtime options override that config, and rejects malformed bundler config before generated wrapper compilation.
@@ -55,18 +61,45 @@
 - Runtime bundling now ignores forward-compatible unknown `convex.json` keys while still applying known runtime fields, so new Convex CLI config fields do not break Alchemy bundling.
 - Runtime local component bundling now emits direct app definition dependencies and component definitions for local component configs, including custom config filenames, and includes those component modules in bundle size accounting and bundle hashes.
 - Runtime local component bundling now emits component `schema.ts/js` and isolate function modules into deploy2 component implementation state, carries that state through `start_push` request modeling, changes the bundle hash when component implementation modules change, and rejects component `"use node"` modules plus reserved `_deps` paths before persisted state or deploy2 request construction.
-- Runtime local component bundling now recursively discovers transitive local component definitions, keeps app definition dependencies limited to direct app installs, records per-component dependency edges, and externalizes imported component configs through `_componentDeps` like the Convex CLI so backend definition analysis receives dependency stubs instead of inlined config objects.
+- Runtime local component bundling now recursively discovers transitive local component definitions, keeps app definition dependencies limited to direct app installs, records per-component dependency edges, and externalizes imported component configs, including extensionless imports, through `_componentDeps` like the Convex CLI so backend definition analysis receives dependency stubs instead of inlined config objects.
+- Runtime local component configs now reject non-JavaScript/TypeScript config entries before esbuild or deploy2 state construction, so typos like `convex.config.css` fail as authoring errors instead of becoming component definitions.
 - Runtime local component config discovery now ignores valid package imports whose package names contain `.config.`, so component dependency graphs only contain local component definitions while normal package code remains bundled.
 - Runtime local component config imports now preserve the Convex CLI `.js` import to `.ts` config fallback for local component dependency externalization, so source can import `../component/convex.config.js` while authoring the config as TypeScript.
+- Runtime local component config imports now also cover explicit `.ts` imports into dependency stubs, so future resolver changes cannot accidentally inline imported component config source.
+- Runtime explicit local component `configPath` values now resolve through the same Convex CLI candidate fallback before esbuild, and missing extensionless configs report every candidate path tried.
+- Runtime default local component config discovery now checks `convex.config.ts` first and `convex.config.js` second, prefers the TypeScript config when both exist, and missing defaults report both candidate paths instead of failing with an incomplete TypeScript-only diagnostic.
+- Runtime, DSL, and Alchemy component source metadata now reject blank and control-character package/local/config path fields before generated config code, esbuild, resource materialization, or runtime bundling can turn them into confusing imports.
+- Runtime, DSL, and Alchemy component identity metadata now reject blank/whitespace/control `id` and `name`, malformed `httpPrefix` including whitespace/control characters, and blank/whitespace/control component `test` imports before generated app config, manifests, runtime bundling, or resource materialization can persist invalid install metadata.
+- DSL and runtime app declaration schemas now reject invalid group names and function export names before generated wrapper paths or TypeScript exports are built, preserving early DX for both `defineGroup` callers and raw `AppBundler` inputs.
+- DSL and runtime app declaration schemas now reject blank/control app and group module strings before generated imports, file maps, or bundle state can carry malformed module specifiers.
+- DSL and runtime HTTP declaration schemas now reject whitespace/control route paths before generated `convex/http.ts` or runtime function manifests can persist invalid HTTP identities.
 - Runtime package component bundling now resolves package-backed `convex.config` definitions from `node_modules`, emits their schema/function implementation state into deploy2 component definitions, supports local components importing package components, preserves the Convex CLI `.js` to `.ts` config fallback, externalizes root/package config imports through `_componentDeps`, and reports invalid package component config references before generated schema/module bundling can mask the source error.
+- Runtime package component dependency discovery now treats package root imports that resolve to component config modules as component dependencies, so local component configs can import package components through root exports without inlining package config source.
+- Runtime mixed component graphs now cover local component definitions importing scoped package-backed component configs, preserving `_componentDeps` stubs and scoped package dependency edges.
+- Runtime local component dependency stubs now have symlinked project-root coverage, proving realpath/alias handling preserves `_componentDeps` instead of inlining imported config source.
+- Runtime package component bundling now resolves package-backed component configs from ancestor `node_modules` directories, keeping nested workspace apps compatible with hoisted package components.
+- Runtime package component bundling now covers scoped package-backed components hoisted above nested app roots with custom Convex functions directories, preserving deterministic deploy2 definition paths relative to the configured functions directory.
+- High-level `RuntimeDeployer` now carries project-root `convex.json` functions config and scoped hoisted package component definitions into deploy2 bundle state, proving the direct bundler behavior survives the Alchemy deployer boundary.
 - Runtime package component config resolution now honors package `exports` maps, including `./convex.config.js` exports that point at source `convex.config.ts` files under package subdirectories, and preserves syntax/build failures as esbuild errors instead of flattening them into generic missing-config messages.
 - Runtime package component config resolution now covers custom extensionless `configExport` values that resolve to TypeScript config sources, keeping package component authoring ergonomic without sacrificing deterministic deploy2 paths.
+- Runtime package component config failures now show all extensionless candidate paths tried for custom `configExport` values, making missing config diagnostics actionable for package authors.
 - Runtime package component config resolution now distinguishes a missing component config import from a real build failure inside an existing config, so missing helper packages surface by name instead of being flattened into a generic missing-config message.
 - Runtime generated modules, component definition bundles, and component schema/function implementation bundles now use the Convex CLI package export conditions (`convex`, then `module`) so packages with conditional exports resolve the same source entrypoints that `convex deploy` would bundle.
 - Runtime generated modules now match the Convex CLI bundler's shared chunk behavior, emitting `_deps/<hash>.js` modules for shared helper code and preserving those chunks in Alchemy bundle state and deploy2 `changedModules`.
 - Runtime generated Node modules now use the Convex CLI node shared-chunk layout, emitting `_deps/node/<hash>.js` modules with `environment: "node"` and preserving those chunks unchanged in deploy2 `changedModules`.
 - Runtime generated modules and local component schema/function implementation bundles now use Convex CLI-style production esbuild settings (`process.env.NODE_ENV` defined as production, JSX automatic runtime, syntax/identifier minification without whitespace minification, and `keepNames`) so deployable source and bundle hashes align with CLI semantics.
 - Runtime local component definition bundles now use the Convex CLI component-definition production/minification settings, so component config analysis sees production code rather than development branches.
+- High-level `RuntimeDeployer` now carries project-root `convex.json` `node.externalPackages` and `node.nodeVersion` into deploy2 bundle state without requiring explicit runtime source options.
+- High-level `RuntimeDeployer` now has coverage proving explicit `externalPackages` and `nodeVersion` source options override project-root `convex.json` node config before deploy2 state is built.
+- High-level `RuntimeDeployer` now carries project-root `convex.json` `bundler.includeSourcesContent` into deploy2 source maps and lets explicit `includeSourcesContent` options override that config.
+- Direct `RuntimeDeployer` dry-run coverage now proves deploy2 uses `evaluate_push` plus schema wait, skips `start_push`, `finish_push`, and completion reporting, and persists non-committal deployer state without deployed module hashes.
+- High-level `RuntimeDeployer` externalized Node dependency inference now resolves package metadata from ancestor `node_modules` directories at the deployer boundary, preserving nested workspace and hoisted install DX.
+- High-level `RuntimeDeployer` now rejects malformed project-root `convex.json` config before deploy2 side effects, so config diagnostics are reported before any backend push/evaluate call.
+- Shared `ConvexCliLive` adapter coverage now includes `hash=` parsing from stdout, the `unknown` fallback when the CLI prints no hash token, default cwd fallback for empty source paths, no-flag command construction when dry-run/deployment URL/deploy key are omitted, exact URL targeting through Convex's hidden `--url` + `--admin-key` pair, deploy-key environment fallback when no URL is pinned, and the guardrail that URL-only input does not pass Convex's incomplete hidden URL flag.
+- `Convex.Bundle` CLI action coverage now proves source hashes ignore generated `.convex` metadata, real Convex `_generated` codegen artifacts, and `node_modules` churn while changing on real source edits, and malformed persisted action state fails schema validation before the shared CLI deploy service can run.
+- `Convex.Bundle` action execution coverage now proves dry-run and deploy-key inputs are forwarded to the shared CLI service while persisted bundle attributes keep deploy secrets out of Alchemy state.
+- `Convex.Bundle` now validates and canonicalizes deployment identity before hashing source or registering action state, validates persisted `sourceHash` as a sha256, normalizes plain secret-string deploy keys into `Redacted`, and rejects string-only or malformed deployment action state before CLI side effects.
+- `Convex.Bundle` now rejects blank and control-character source paths through shared props and action schemas before hashing, action registration, or CLI side effects.
 - `LocalBackend` now rejects invalid props before touching the filesystem or injected process service.
 - `LocalBackend` now rejects blank `dataDir`, `instanceName`, process admin-key, and persisted `dataDir` strings through one shared text schema before path resolution or process control.
 - `AppDeployProvider` now treats the target deployment name and URL as part of idempotence, so same-bundle redeploys to a different Convex deployment do not silently reuse stale state.
@@ -141,6 +174,8 @@
 - Deployable runtime bundles now emit source maps by default for generated modules and schema bundles, while `generateSourceMaps: false` remains an explicit opt-out.
 - Alchemy control-plane coverage now covers live `ConvexCliLive` command construction, redacted deploy-key environment forwarding, stderr/stdout hash parsing for deterministic state, typed non-zero exit failures, and typed unexpected spawn failures.
 - High-level app coverage now covers deployer delegation, dry-run forwarding, session notes, props validation before deployer side effects, typed deployer failure propagation, and idempotent delete behavior.
+- High-level app coverage now validates previous persisted `Convex.App` output before deployer side effects and validates deployer results before attributes are persisted.
+- High-level app coverage now rejects malformed deployment references before deployer side effects, canonicalizes root-only trailing slashes before deployer calls and persisted app attributes, and normalizes stale previous deployment URLs before passing prior state to deployers.
 - Generated-files deployer coverage now covers invalid source guardrails, generated-file ownership failures before CLI side effects, dry-run bundle skipping, default bundle source routing to the generated Convex directory, manifest refresh via provider `read`, invalid manifest JSON/schema errors, and the high-level files `App` wrapper.
 - The runtime barrel now exports persisted attribute schemas for `AppDeploy` and `LocalBackend`, so callers can validate Alchemy state snapshots with the same contracts the providers use.
 - `AppBundle` now bridges esbuild through a plain `Effect.tryPromise` boundary plus `Effect.map` transformation instead of an `async`/`await` wrapper in resource code, and the real-CLI test helper follows the same Effect boundary style.
@@ -1613,3 +1648,420 @@ Expected:
 - [x] Cover stale `functionsDirectory`, `nodeVersion`, and `udfServerVersion` state being refreshed from the current bundle.
 - [x] Cover high-level `RuntimeDeployer` redeploying the same bundle when previous deployer state belongs to a different deployment identity.
 - [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 121: Dry-Run State Idempotence
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover same-bundle dry-run `AppDeploy` reconciliation skipping deploy2 I/O while keeping state non-committal and without deployed module hashes.
+- [x] Cover high-level same-bundle dry-run `RuntimeDeployer` state skipping deploy2 I/O, preserving the previous dry-run timestamp, and avoiding deployed module hashes.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 122: Dry-Run Deployed Hash Pruning
+
+**Files:**
+
+- Modify: `packages/convex-runtime/src/AppDeploy.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover stale dry-run `AppDeploy` state containing deployed module hashes being normalized without deploy2 I/O.
+- [x] Prune `deployedModuleHashes` from same-bundle dry-run output while preserving dry-run timestamp and deployment state.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 123: Hoisted Package Components and High-Level Dry-Run Hash Pruning
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover package-backed component configs resolving from ancestor `node_modules` directories for nested workspace app roots.
+- [x] Cover stale high-level dry-run `RuntimeDeployer` module hashes being pruned without deploy2 I/O.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 124: Scoped Hoisted Package Components
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover scoped package-backed component configs resolving from ancestor `node_modules` directories.
+- [x] Cover package component definition paths staying relative to a custom project-root `functions` directory from `convex.json`.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 125: Extensionless Component Dependencies and RuntimeDeployer Scoped Hoists
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover extensionless local component config imports being externalized into `_componentDeps` dependency stubs.
+- [x] Cover high-level `RuntimeDeployer` carrying project-root `convex.json` functions config and scoped hoisted package component definitions into deploy2 bundle state.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 126: Extensionless Package Config Diagnostics
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover missing package component `configExport` values without extensions reporting the base, `.js`, and `.ts` candidates.
+- [x] Keep missing-config failures distinct from build failures and missing-package failures in the focused invalid-package-config test.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 127: Scoped Package Component Dependency Graphs
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover local component definitions importing scoped package-backed component configs.
+- [x] Cover scoped package component dependency edges and `_componentDeps` stubs without inlining package config source into the parent local component.
+- [x] Re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 128: RuntimeDeployer Project Node Config
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover high-level `RuntimeDeployer` reading project-root `convex.json` `node.externalPackages` and `node.nodeVersion`.
+- [x] Assert deploy2 bundle state preserves externalized Node dependency metadata and the configured Node runtime version without explicit source options.
+- [x] Re-run isolated, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 129: RuntimeDeployer Overrides and Optional Dependency Inference
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover externalized Node dependency inference skipping absent optional/peer packages while preserving the primary package metadata.
+- [x] Cover high-level `RuntimeDeployer` explicit `externalPackages` and `nodeVersion` options overriding project-root `convex.json` node config.
+- [x] Re-run isolated, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 130: RuntimeDeployer Bundler Config Parity
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover high-level `RuntimeDeployer` reading project-root `convex.json` `bundler.includeSourcesContent` into deploy2 bundle source maps.
+- [x] Cover explicit high-level `includeSourcesContent: false` overriding project-root bundler config and changing bundle identity.
+- [x] Re-run isolated, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 131: RuntimeDeployer Dry-Run and Project Config Guardrails
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover direct `RuntimeDeployer` dry-run deploy2 flow using `evaluate_push` plus schema wait while skipping commit/report calls and persisted deployed module hashes.
+- [x] Cover high-level `RuntimeDeployer` external dependency metadata inference from ancestor `node_modules` directories for nested workspace project roots.
+- [x] Cover malformed high-level project-root `convex.json` bundler config failing before any deploy2 side effects.
+- [x] Re-run isolated, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 132: Shared Convex CLI Adapter Output and Defaults
+
+**Files:**
+
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `ConvexCliLive` parsing `hash=` output from stdout in addition to prior `bundleHash:` stderr parsing.
+- [x] Cover the `unknown` bundle hash fallback when successful Convex CLI output contains no hash token.
+- [x] Cover default command construction and cwd fallback when source is empty and no dry-run, deployment URL, or deploy key options are supplied.
+- [x] Re-run targeted ControlPlane coverage, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 133: Convex Bundle Action State Hashing and Guardrails
+
+**Files:**
+
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `Convex.Bundle` source hashing so generated `.convex` metadata and `node_modules` churn do not trigger CLI deploy state changes.
+- [x] Cover `Convex.Bundle` source hashing changing when real source files change.
+- [x] Cover malformed persisted Bundle action state failing schema validation before the shared `ConvexCli` deploy service can run.
+- [x] Observe the failing targeted ControlPlane run before correcting the test design, then re-run targeted ControlPlane coverage, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 134: Convex Bundle Dry-Run Secret Boundary
+
+**Files:**
+
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `Convex.Bundle` forwarding `dryRun: true` to the shared `ConvexCli` deploy service.
+- [x] Cover redacted deploy keys being forwarded to the CLI service while remaining absent from persisted bundle attributes.
+- [x] Observe the initial targeted failure caused by the process-cached Action runner fake, then scope the assertions through the first Bundle action runner capture.
+- [x] Re-run targeted ControlPlane coverage, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 135: High-Level Convex App State Boundary
+
+**Files:**
+
+- Modify: `packages/alchemy/src/Convex/App/ConvexApp.ts`
+- Modify: `packages/alchemy/test/Convex/App.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover malformed previous `Convex.App` output failing before the deployer can see or trust stale Alchemy state.
+- [x] Cover malformed deployer results failing before high-level app attributes can be persisted.
+- [x] Add a focused high-level app output/result schema boundary while preserving deployer-state pass-through for valid runtime state.
+- [x] Observe the red targeted App test failures, then re-run focused App coverage, targeted ControlPlane coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 136: High-Level Convex App Deployment Identity Boundary
+
+**Files:**
+
+- Modify: `packages/alchemy/src/Convex/App/ConvexApp.ts`
+- Modify: `packages/alchemy/test/Convex/App.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover string-only and malformed URL deployment references failing before deployer calls or session notes.
+- [x] Cover desired deployment URLs with root-only trailing slashes being canonicalized before deployer calls and persisted attributes.
+- [x] Cover stale previous app output URLs with trailing slashes being canonicalized before prior state is passed back to deployers.
+- [x] Observe the red targeted App test failures, then re-run focused App coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 137: Convex Bundle Deployment and Secret State Boundary
+
+**Files:**
+
+- Modify: `packages/alchemy/src/Convex/Bundle.ts`
+- Modify: `packages/alchemy/src/Convex/Schemas.ts`
+- Modify: `packages/alchemy/src/Convex/App/ConvexApp.ts`
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `Convex.Bundle` rejecting malformed deployment props before source hashing or action registration.
+- [x] Cover `Convex.Bundle` storing canonical deployment URLs in action input and persisted bundle attributes.
+- [x] Cover string-only and malformed persisted Bundle deployment action state failing before CLI deploy side effects.
+- [x] Cover Bundle action `sourceHash` state validation and plain string deploy-key normalization to `Redacted` before CLI calls or action-state persistence.
+- [x] Share the strict deployment identity decoder between high-level `Convex.App` and CLI-backed `Convex.Bundle`.
+- [x] Observe red targeted ControlPlane failures, then re-run focused ControlPlane/App coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 138: Package Root Component Dependency Inference
+
+**Files:**
+
+- Modify: `packages/convex-runtime/src/AppBundle.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover local component configs importing a package component through the package root export when that export resolves to `convex.config.ts`.
+- [x] Preserve ordinary package imports whose package names contain `.config.` as bundled code instead of component dependencies.
+- [x] Cover symlinked project roots preserving local component dependency stubs and avoiding imported config inlining.
+- [x] Extend component dependency aliasing so exact import-specifier aliases can be externalized even when the import specifier itself does not contain `.config.`.
+- [x] Observe the red root-export component dependency test, then re-run focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 139: Conditional Root Component Export Coverage
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover local component configs importing a package root whose `exports["."]` selects a Convex-specific component config over a default export.
+- [x] Assert the importing local component receives a `_componentDeps` stub instead of inlining either the Convex config marker or the default export marker.
+- [x] Assert the package component definition bundles the Convex condition target and not the default export target.
+- [x] Re-run the targeted test, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 140: Direct Package Root Component Fallback
+
+**Files:**
+
+- Modify: `packages/convex-runtime/src/AppBundle.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover direct `source: { package }` component installs resolving from a package root `convex` export when the default `package/convex.config.js` path is absent.
+- [x] Preserve the guardrail that ordinary package root exports such as `index.js` are not silently treated as component configs.
+- [x] Add a package-root fallback only for the default package component config lookup, and only accept the fallback when the resolved module path is a config module.
+- [x] Observe the red direct root-export component test, then re-run the targeted tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 141: Convex CLI Exact Deployment Targeting
+
+**Files:**
+
+- Modify: `packages/alchemy/src/Convex/Cli.ts`
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `ConvexCliLive` targeting an explicit Alchemy-managed deployment URL through Convex CLI's required hidden `--url` plus `--admin-key` pair.
+- [x] Preserve deploy-key-only deploys through `CONVEX_DEPLOY_KEY` environment forwarding when no deployment URL is pinned.
+- [x] Cover URL-only input avoiding Convex CLI's incomplete hidden `--url` flag because Convex ignores it without `--admin-key`.
+- [x] Observe the red targeted ControlPlane failures, then re-run targeted ControlPlane coverage and focused runtime coverage before the broader gates.
+
+## Task 142: RuntimeDeployer Bundle-Only State Boundary
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover switching a high-level runtime source to `deploy: false` while stale RuntimeDeployer state exists.
+- [x] Assert bundle-only mode emits fresh bundle metadata and function manifests instead of reusing stale deployed timestamps or function state.
+- [x] Assert bundle-only mode drops deployer state and does not require deploy2 dependencies even when an admin key is present.
+- [x] Re-run the targeted runtime test, focused runtime coverage, combined DSL/runtime coverage, and the full Convex package sweep.
+
+## Task 143: Local Component Config Module Guardrail
+
+**Files:**
+
+- Modify: `packages/convex-runtime/src/AppBundle.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover a local component `configPath` pointing at `convex.config.css` failing instead of entering deploy2 component definition state.
+- [x] Reject non-JavaScript/TypeScript component definition entry paths before esbuild.
+- [x] Observe the red targeted runtime failure, then re-run targeted runtime, focused runtime coverage, combined DSL/runtime coverage, and the full Convex package sweep.
+
+## Task 144: Explicit Local Component Config Fallback
+
+**Files:**
+
+- Modify: `packages/convex-runtime/src/AppBundle.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover explicit local component `configPath: "convex.config"` resolving to an authored `convex.config.ts` file before component-definition bundling.
+- [x] Cover missing explicit extensionless local config paths reporting the base, `.js`, and `.ts` candidates instead of a misleading module-extension error.
+- [x] Resolve configured local component config paths through the same Convex CLI candidate fallback used by imported component configs.
+- [x] Observe the red missing-candidate diagnostic test, then re-run targeted runtime, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 145: Default Local Component Config Fallback
+
+**Files:**
+
+- Modify: `packages/convex-runtime/src/AppBundle.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover local component sources without explicit `configPath` resolving `convex.config.js` when `convex.config.ts` is absent.
+- [x] Cover missing default local component configs reporting both `convex.config.ts` and `convex.config.js` candidates.
+- [x] Resolve implicit local component config paths with TypeScript-first, JavaScript-second Convex CLI fallback.
+- [x] Observe the red targeted runtime failure, then re-run targeted runtime, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 146: Local Component Config Precedence And Explicit TypeScript Imports
+
+**Files:**
+
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover local component configs importing another local component through an explicit `.ts` config import and receiving a `_componentDeps` stub instead of inlining source.
+- [x] Cover default local component discovery preferring `convex.config.ts` over `convex.config.js` when both files exist.
+- [x] Re-run the targeted runtime tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 147: Bundle Source Hash Generated Codegen Noise
+
+**Files:**
+
+- Modify: `packages/alchemy/src/Convex/Bundle.ts`
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `Convex.Bundle` source hashing ignoring real Convex `convex/_generated/**` codegen artifacts in addition to `.convex/**` metadata and `node_modules/**`.
+- [x] Exclude `_generated/**` trees from the Bundle source hash so generated codegen churn does not retrigger CLI deploy actions.
+- [x] Observe the red targeted ControlPlane failure, then re-run targeted ControlPlane, focused ControlPlane coverage, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 148: Bundle Source Path Boundary
+
+**Files:**
+
+- Modify: `packages/alchemy/src/Convex/Bundle.ts`
+- Modify: `packages/alchemy/src/Convex/Schemas.ts`
+- Modify: `packages/alchemy/test/Convex/ControlPlane.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover blank and control-character Bundle source paths failing before source hashing, action registration, or CLI calls.
+- [x] Validate Bundle source paths through the shared props and action schemas, rejecting blank and control-character values.
+- [x] Observe the red targeted ControlPlane failure, then re-run targeted ControlPlane, focused ControlPlane coverage, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 149: Component Source Metadata Boundary
+
+**Files:**
+
+- Modify: `packages/convex-dsl/src/index.ts`
+- Modify: `packages/convex-dsl/test/index.test.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `packages/alchemy/src/Convex/Schemas.ts`
+- Modify: `packages/alchemy/test/Convex/Schemas.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `defineComponentUse` rejecting blank and control-character component source metadata at declaration boundaries.
+- [x] Cover `AppBundler` rejecting raw invalid component source metadata before generated config code or esbuild bundling.
+- [x] Keep the Alchemy `Convex.Component` props schema aligned with the DSL/runtime component source guardrails.
+- [x] Observe the red targeted DSL/runtime/Alchemy schema failures, then re-run targeted tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 150: Component Identity Metadata Boundary
+
+**Files:**
+
+- Modify: `packages/convex-dsl/src/index.ts`
+- Modify: `packages/convex-dsl/test/index.test.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `packages/alchemy/src/Convex/Schemas.ts`
+- Modify: `packages/alchemy/test/Convex/Schemas.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `defineComponentUse` rejecting blank/whitespace/control component `id` and `name`, malformed `httpPrefix`, and blank/whitespace/control component `test` imports at declaration boundaries.
+- [x] Cover `AppBundler` rejecting raw invalid component identity metadata before generated app config, manifests, or esbuild bundling.
+- [x] Keep the Alchemy `Convex.Component` props schema aligned with the DSL/runtime component identity guardrails.
+- [x] Observe the red targeted DSL/runtime/Alchemy schema failures, then re-run targeted tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 151: Generated Wrapper Identity Boundary
+
+**Files:**
+
+- Modify: `packages/convex-dsl/src/index.ts`
+- Modify: `packages/convex-dsl/test/index.test.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `defineGroup` rejecting invalid group names before they can become generated wrapper file paths.
+- [x] Cover `defineGroup` rejecting invalid function export names before they can become generated TypeScript exports.
+- [x] Cover raw `AppBundler` app inputs rejecting invalid group/function identity metadata before generated file compilation or module-required errors can mask the authoring issue.
+- [x] Validate group and function identity through the shared `AppDeclarationSchema`, preserving the same guardrails for DSL callers and runtime/deployer callers.
+- [x] Observe the red targeted DSL/runtime failures, then re-run targeted tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 152: App Module String Boundary
+
+**Files:**
+
+- Modify: `packages/convex-dsl/src/index.ts`
+- Modify: `packages/convex-dsl/test/index.test.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover blank app module strings failing before generated wrapper imports are emitted.
+- [x] Cover control-character group module strings failing at declaration/schema boundaries.
+- [x] Cover raw `AppBundler` app inputs rejecting invalid app/group module strings before generated file compilation, esbuild resolution, or bundle-state persistence.
+- [x] Validate module strings through the shared `AppDeclarationSchema` and decode raw `compileApp` input before emitting generated files.
+- [x] Observe the red targeted DSL/runtime failures, then re-run targeted tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.
+
+## Task 153: HTTP Route Path Boundary
+
+**Files:**
+
+- Modify: `packages/convex-dsl/src/server/httpApi.ts`
+- Modify: `packages/convex-dsl/test/server-http-api.test.ts`
+- Modify: `packages/convex-runtime/test/index.test.ts`
+- Modify: `docs/superpowers/plans/2026-05-20-convex-runtime-coverage-plan.md`
+
+- [x] Cover `defineHttp` rejecting whitespace/control HTTP route paths before mount metadata is stored.
+- [x] Cover `defineHttp` rejecting unsupported HTTP methods at declaration boundaries.
+- [x] Cover raw `AppBundler` app inputs rejecting invalid HTTP route paths before generated `convex/http.ts`, runtime module state, or `functionManifest` entries are created.
+- [x] Validate HTTP route paths through the shared `HttpDeclarationSchema` with the same boundary for DSL callers and runtime/deployer callers.
+- [x] Observe the red targeted DSL/runtime failures, then re-run targeted tests, focused runtime coverage, combined DSL/runtime coverage, the full Convex sweep, typecheck, format check, diff whitespace check, and coverage artifact hygiene.

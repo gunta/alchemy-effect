@@ -177,7 +177,7 @@ const failingConvexProcessLayer = (message: string) =>
 
 describe("Convex control plane resources", () => {
   it.effect(
-    "runs Convex CLI deploys with deterministic state from stderr hashes",
+    "runs Convex CLI deploys against explicit deployment URLs with hidden admin keys",
     () => {
       const commands: unknown[] = [];
       return Effect.gen(function* () {
@@ -200,12 +200,11 @@ describe("Convex control plane resources", () => {
             "--dry-run",
             "--url",
             "https://calm-cat-123.convex.cloud",
+            "--admin-key",
+            "deploy-secret",
           ],
           options: {
             cwd: "/tmp/alchemy-convex-app",
-            env: expect.objectContaining({
-              CONVEX_DEPLOY_KEY: "deploy-secret",
-            }),
           },
         });
       }).pipe(
@@ -221,6 +220,139 @@ describe("Convex control plane resources", () => {
         ),
       );
     },
+  );
+
+  it.effect(
+    "runs Convex CLI deploys with deploy-key environment fallback when no URL is pinned",
+    () => {
+      const commands: unknown[] = [];
+      return Effect.gen(function* () {
+        const cli = yield* ConvexCli;
+        const result = yield* cli.deploy({
+          source: "/tmp/alchemy-convex-app",
+          deployKey: Redacted.make("deploy-secret"),
+        });
+
+        expect(result.bundleHash).toBe("aa11bb");
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({
+          _tag: "StandardCommand",
+          command: "bunx",
+          args: ["convex", "deploy"],
+          options: {
+            cwd: "/tmp/alchemy-convex-app",
+            env: expect.objectContaining({
+              CONVEX_DEPLOY_KEY: "deploy-secret",
+            }),
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          ConvexCliLive.pipe(
+            Layer.provide(
+              fakeConvexProcessLayer({
+                stdout: "hash=aa11bb\n",
+                onCommand: (command) => commands.push(command),
+              }),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "does not pass Convex CLI's incomplete hidden URL flag without an admin key",
+    () => {
+      const commands: unknown[] = [];
+      return Effect.gen(function* () {
+        const cli = yield* ConvexCli;
+        yield* cli.deploy({
+          source: "/tmp/alchemy-convex-app",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+        });
+
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({
+          _tag: "StandardCommand",
+          command: "bunx",
+          args: ["convex", "deploy"],
+          options: {
+            cwd: "/tmp/alchemy-convex-app",
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          ConvexCliLive.pipe(
+            Layer.provide(
+              fakeConvexProcessLayer({
+                stdout: "deploy complete\n",
+                onCommand: (command) => commands.push(command),
+              }),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "runs Convex CLI deploys with default cwd args and stdout hash parsing",
+    () => {
+      const commands: unknown[] = [];
+      return Effect.gen(function* () {
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const cli = yield* ConvexCli;
+        const result = yield* cli.deploy({
+          source: "",
+          deploymentName: "calm-cat-123",
+        });
+
+        expect(result.bundleHash).toBe("def-456");
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({
+          _tag: "StandardCommand",
+          command: "bunx",
+          args: ["convex", "deploy"],
+          options: {
+            cwd,
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          ConvexCliLive.pipe(
+            Layer.provide(
+              fakeConvexProcessLayer({
+                stdout: "hash=def-456\n",
+                onCommand: (command) => commands.push(command),
+              }),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("returns unknown when Convex CLI output has no bundle hash", () =>
+    Effect.gen(function* () {
+      const cli = yield* ConvexCli;
+      const result = yield* cli.deploy({
+        source: "/tmp/alchemy-convex-app",
+      });
+
+      expect(result.bundleHash).toBe("unknown");
+    }).pipe(
+      Effect.provide(
+        ConvexCliLive.pipe(
+          Layer.provide(
+            fakeConvexProcessLayer({
+              stdout: "deploy complete\n",
+              stderr: "no hash printed\n",
+            }),
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect("maps failed Convex CLI deploys to typed bundle errors", () =>
@@ -581,7 +713,9 @@ describe("Convex control plane resources", () => {
     const cli: ConvexCli["Service"] = {
       deploy: (input) => {
         calls.push(input);
-        return Effect.succeed({ bundleHash: "hash-123" });
+        return Effect.succeed({
+          bundleHash: input.dryRun ? "dry-run-hash" : "hash-123",
+        });
       },
     };
 
@@ -591,6 +725,346 @@ describe("Convex control plane resources", () => {
         const path = yield* Path.Path;
         const source = yield* fs.makeTempDirectory({
           prefix: "alchemy-convex-bundle-",
+        });
+        yield* fs.writeFileString(
+          path.join(source, "schema.ts"),
+          "export default {};\n",
+        );
+        const dryRunSource = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-bundle-dry-run-",
+        });
+        yield* fs.writeFileString(
+          path.join(dryRunSource, "schema.ts"),
+          "export default {};\n",
+        );
+        const canonicalSource = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-bundle-canonical-url-",
+        });
+        yield* fs.writeFileString(
+          path.join(canonicalSource, "schema.ts"),
+          "export default {};\n",
+        );
+        const stringKeySource = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-bundle-string-key-",
+        });
+        yield* fs.writeFileString(
+          path.join(stringKeySource, "schema.ts"),
+          "export default {};\n",
+        );
+
+        const stack = actionStack();
+        yield* Bundle("Code", {
+          deployment,
+          source,
+        }).pipe(
+          Effect.provideService(Stack, stack),
+          Effect.provideService(ConvexCli, cli),
+        );
+        yield* Bundle("DryRunCode", {
+          deployment,
+          source: dryRunSource,
+          deployKey: Redacted.make("deploy-secret"),
+          dryRun: true,
+        }).pipe(
+          Effect.provideService(Stack, stack),
+          Effect.provideService(ConvexCli, cli),
+        );
+        yield* Bundle("CanonicalUrlCode", {
+          deployment: {
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud///",
+          },
+          source: canonicalSource,
+        }).pipe(
+          Effect.provideService(Stack, stack),
+          Effect.provideService(ConvexCli, cli),
+        );
+        yield* Bundle("StringDeployKeyCode", {
+          deployment,
+          source: stringKeySource,
+          deployKey: "deploy-secret" as never,
+          dryRun: true,
+        }).pipe(
+          Effect.provideService(Stack, stack),
+          Effect.provideService(ConvexCli, cli),
+        );
+
+        const action = stack.actions.Code;
+        const dryRunAction = stack.actions.DryRunCode;
+        const canonicalAction = stack.actions.CanonicalUrlCode;
+        const stringKeyAction = stack.actions.StringDeployKeyCode;
+        expect(action?.Kind).toBe("action");
+        expect(dryRunAction?.Kind).toBe("action");
+        expect(canonicalAction?.Kind).toBe("action");
+        expect(stringKeyAction?.Kind).toBe("action");
+        expect(
+          (
+            canonicalAction!.Input.deployment as {
+              readonly deploymentUrl: string;
+            }
+          ).deploymentUrl,
+        ).toBe("https://calm-cat-123.convex.cloud");
+        expect(JSON.stringify(stringKeyAction!.Input)).not.toContain(
+          "deploy-secret",
+        );
+        const attrs = yield* action.Run(action.Input) as Effect.Effect<
+          { bundleHash: string; sourceHash: string; dryRun: boolean },
+          any,
+          never
+        >;
+        const dryRunAttrs = yield* dryRunAction!.Run(dryRunAction!.Input);
+        const canonicalAttrs = yield* canonicalAction!.Run(
+          canonicalAction!.Input,
+        );
+        const stringKeyAttrs = yield* stringKeyAction!.Run(
+          stringKeyAction!.Input,
+        );
+
+        expect(attrs.bundleHash).toBe("hash-123");
+        expect(attrs.sourceHash).toMatch(/^[a-f0-9]+$/);
+        expect(attrs.dryRun).toBe(false);
+        expect(dryRunAttrs).toMatchObject({
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          source: dryRunSource,
+          bundleHash: "dry-run-hash",
+          dryRun: true,
+        });
+        expect(canonicalAttrs).toMatchObject({
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          source: canonicalSource,
+          bundleHash: "hash-123",
+          dryRun: false,
+        });
+        expect(stringKeyAttrs).toMatchObject({
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          source: stringKeySource,
+          bundleHash: "dry-run-hash",
+          dryRun: true,
+        });
+        expect(JSON.stringify(stringKeyAttrs)).not.toContain("deploy-secret");
+        expect(JSON.stringify(dryRunAttrs)).not.toContain("deploy-secret");
+        expect(
+          Redacted.value(
+            (calls[3] as { readonly deployKey: Redacted.Redacted<string> })
+              .deployKey,
+          ),
+        ).toBe("deploy-secret");
+        const stringDeploymentFailure = yield* canonicalAction!
+          .Run({
+            ...canonicalAction!.Input,
+            deployment: "calm-cat-123",
+          } as never)
+          .pipe(Effect.flip);
+        const pathDeploymentFailure = yield* canonicalAction!
+          .Run({
+            ...canonicalAction!.Input,
+            deployment: {
+              deploymentName: "calm-cat-123",
+              deploymentUrl: "https://calm-cat-123.convex.cloud/path",
+            },
+          } as never)
+          .pipe(Effect.flip);
+
+        expect(String(stringDeploymentFailure)).toContain(
+          "Convex.Bundle deployment",
+        );
+        expect(String(pathDeploymentFailure)).toContain("deploymentUrl");
+        expect(calls).toEqual([
+          {
+            source,
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+            deployKey: undefined,
+            dryRun: false,
+          },
+          expect.objectContaining({
+            source: dryRunSource,
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+            dryRun: true,
+          }),
+          {
+            source: canonicalSource,
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+            deployKey: undefined,
+            dryRun: false,
+          },
+          expect.objectContaining({
+            source: stringKeySource,
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+            dryRun: true,
+          }),
+        ]);
+        expect(
+          Redacted.value(
+            (calls[1] as { readonly deployKey: Redacted.Redacted<string> })
+              .deployKey,
+          ),
+        ).toBe("deploy-secret");
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+      ),
+    );
+  });
+
+  it("rejects invalid Bundle deployment props before hashing source", async () => {
+    const calls: Array<unknown> = [];
+    const cli: ConvexCli["Service"] = {
+      deploy: (input) => {
+        calls.push(input);
+        return Effect.succeed({ bundleHash: "hash-123" });
+      },
+    };
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const stack = actionStack();
+        const failure = yield* Bundle("BadDeployment", {
+          deployment: {
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud/path",
+          },
+          source: "/definitely/not/a/convex/source",
+        }).pipe(
+          Effect.provideService(Stack, stack),
+          Effect.provideService(ConvexCli, cli),
+          Effect.flip,
+        );
+
+        expect(String(failure)).toContain("deploymentUrl");
+        expect(stack.actions.BadDeployment).toBeUndefined();
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+      ),
+    );
+  });
+
+  it("rejects blank and control-character Bundle source paths before hashing source", async () => {
+    const calls: Array<unknown> = [];
+    const cli: ConvexCli["Service"] = {
+      deploy: (input) => {
+        calls.push(input);
+        return Effect.succeed({ bundleHash: "hash-123" });
+      },
+    };
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        for (const [id, source, expected] of [
+          ["BlankSource", "   ", "blank"],
+          ["ControlSource", "convex\u0000app", "control"],
+        ] as const) {
+          const stack = actionStack();
+          const failure = yield* Bundle(id, {
+            deployment,
+            source,
+          }).pipe(
+            Effect.provideService(Stack, stack),
+            Effect.provideService(ConvexCli, cli),
+            Effect.flip,
+          );
+
+          expect(String(failure)).toContain("source");
+          expect(String(failure)).toContain(expected);
+          expect(stack.actions[id]).toBeUndefined();
+        }
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+      ),
+    );
+  });
+
+  it("hashes Bundle source state while ignoring generated Convex artifacts", async () => {
+    const cli: ConvexCli["Service"] = {
+      deploy: () => Effect.succeed({ bundleHash: "unused" }),
+    };
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const source = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-bundle-source-hash-",
+        });
+        const sourceFile = path.join(source, "schema.ts");
+        yield* fs.writeFileString(sourceFile, "export default {};\n");
+
+        const sourceHash = () =>
+          Effect.gen(function* () {
+            const stack = actionStack();
+            yield* Bundle("Code", {
+              deployment,
+              source,
+              dryRun: true,
+              deployKey: Redacted.make("deploy-secret"),
+            }).pipe(
+              Effect.provideService(Stack, stack),
+              Effect.provideService(ConvexCli, cli),
+            );
+            return stack.actions.Code?.Input.sourceHash as string;
+          });
+
+        const initialHash = yield* sourceHash();
+
+        yield* fs.makeDirectory(path.join(source, ".convex"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(source, ".convex", "deployment.json"),
+          JSON.stringify({ deploymentName: "ignored-dev" }),
+        );
+        yield* fs.makeDirectory(path.join(source, "convex", "_generated"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(source, "convex", "_generated", "api.d.ts"),
+          "export type GeneratedApi = { readonly churn: true };\n",
+        );
+        yield* fs.makeDirectory(path.join(source, "node_modules", "helper"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(source, "node_modules", "helper", "package.json"),
+          JSON.stringify({ name: "helper", version: "1.0.0" }),
+        );
+        const generatedArtifactHash = yield* sourceHash();
+
+        yield* fs.writeFileString(
+          sourceFile,
+          "export default { changed: true };\n",
+        );
+        const changedSourceHash = yield* sourceHash();
+
+        expect(generatedArtifactHash).toBe(initialHash);
+        expect(changedSourceHash).not.toBe(initialHash);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+      ),
+    );
+  });
+
+  it("rejects malformed Bundle action state before Convex CLI side effects", async () => {
+    const calls: Array<unknown> = [];
+    const cli: ConvexCli["Service"] = {
+      deploy: (input) => {
+        calls.push(input);
+        return Effect.succeed({ bundleHash: "hash-123" });
+      },
+    };
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const source = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-bundle-invalid-state-",
         });
         yield* fs.writeFileString(
           path.join(source, "schema.ts"),
@@ -608,24 +1082,22 @@ describe("Convex control plane resources", () => {
 
         const action = stack.actions.Code;
         expect(action?.Kind).toBe("action");
-        const attrs = yield* action.Run(action.Input) as Effect.Effect<
-          { bundleHash: string; sourceHash: string; dryRun: boolean },
-          any,
-          never
-        >;
+        const failure = yield* action!
+          .Run({
+            ...action!.Input,
+            source: 42,
+          } as never)
+          .pipe(Effect.flip);
+        const sourceHashFailure = yield* action!
+          .Run({
+            ...action!.Input,
+            sourceHash: "not-a-sha256",
+          } as never)
+          .pipe(Effect.flip);
 
-        expect(attrs.bundleHash).toBe("hash-123");
-        expect(attrs.sourceHash).toMatch(/^[a-f0-9]+$/);
-        expect(attrs.dryRun).toBe(false);
-        expect(calls).toEqual([
-          {
-            source,
-            deploymentName: "calm-cat-123",
-            deploymentUrl: "https://calm-cat-123.convex.cloud",
-            deployKey: undefined,
-            dryRun: false,
-          },
-        ]);
+        expect(String(failure)).toContain("source");
+        expect(String(sourceHashFailure)).toContain("sourceHash");
+        expect(calls).toEqual([]);
       }).pipe(
         Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
       ),

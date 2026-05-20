@@ -71,4 +71,34 @@ describe("@alchemy/convex server/httpApi", () => {
       },
     });
   });
+
+  it("rejects invalid HTTP route metadata at declaration boundaries", () => {
+    expect(() =>
+      defineHttp({
+        "/api docs": {
+          handler: () => Effect.succeed(new Response("bad")),
+        },
+      } as never),
+    ).toThrow(/HTTP route paths/i);
+    expect(() =>
+      defineHttp({
+        "/api\u0000docs": {
+          handler: () => Effect.succeed(new Response("bad")),
+        },
+      } as never),
+    ).toThrow(/HTTP route paths/i);
+    expect(() =>
+      defineHttp({
+        "/api": {
+          method: "TRACE",
+          handler: () => Effect.succeed(new Response("bad")),
+        },
+      } as never),
+    ).toThrow(/method/);
+    expect(() =>
+      defineHttp({
+        "/empty": {},
+      }),
+    ).toThrow(/handler or api/i);
+  });
 });

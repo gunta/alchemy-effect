@@ -15,6 +15,139 @@ export * from "./server/index.ts";
 export type FunctionKind = "query" | "mutation" | "action";
 export type RuntimeEnvironment = "isolate" | "node";
 
+const hasControlCharacter = (value: string) =>
+  /[\u0000-\u001F\u007F]/.test(value);
+
+const groupNamePattern = /^[A-Za-z0-9_-]+$/;
+const functionExportNamePattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const reservedFunctionExportNames = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "null",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+const GroupNameSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      groupNamePattern.test(value) && !hasControlCharacter(value),
+    {
+      message:
+        "Convex group names must contain only letters, numbers, underscores, or hyphens.",
+    },
+  ),
+);
+
+const FunctionExportNameSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      functionExportNamePattern.test(value) &&
+      !reservedFunctionExportNames.has(value),
+    {
+      message:
+        "Convex function export names must be valid JavaScript export identifiers.",
+    },
+  ),
+);
+
+const ModuleStringSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 && !hasControlCharacter(value),
+    {
+      message:
+        "Convex module strings must not be blank or contain control characters.",
+    },
+  ),
+);
+
+const componentImportString = (message: string) =>
+  Schema.String.pipe(
+    Schema.refine(
+      (value): value is string =>
+        value.trim().length > 0 &&
+        value === value.trim() &&
+        !/\s/.test(value) &&
+        !hasControlCharacter(value),
+      { message },
+    ),
+  );
+
+const ComponentIdentityStringSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 &&
+      value === value.trim() &&
+      !/\s/.test(value) &&
+      !hasControlCharacter(value),
+    {
+      message:
+        "Component identity strings must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+
+const ComponentPathStringSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 && !hasControlCharacter(value),
+    {
+      message:
+        "Component source path strings must not be blank or contain control characters.",
+    },
+  ),
+);
+
+const ComponentImportStringSchema = componentImportString(
+  "Component package and config import strings must not be blank or contain whitespace or control characters.",
+);
+
+const ComponentTestImportStringSchema = componentImportString(
+  "Component test import strings must not be blank or contain whitespace or control characters.",
+);
+
 type SchemaType<Value> =
   Value extends Schema.Schema<infer Type> ? Type : unknown;
 
@@ -218,14 +351,14 @@ export interface GroupDeclaration<
 }
 
 export const ComponentPackageSourceSchema = Schema.Struct({
-  package: Schema.String,
-  version: Schema.optionalKey(Schema.String),
-  configExport: Schema.optionalKey(Schema.String),
+  package: ComponentImportStringSchema,
+  version: Schema.optionalKey(ComponentImportStringSchema),
+  configExport: Schema.optionalKey(ComponentImportStringSchema),
 });
 
 export const ComponentLocalSourceSchema = Schema.Struct({
-  local: Schema.String,
-  configPath: Schema.optionalKey(Schema.String),
+  local: ComponentPathStringSchema,
+  configPath: Schema.optionalKey(ComponentPathStringSchema),
 });
 
 export const ComponentSourceSchema = Schema.Union([
@@ -234,10 +367,20 @@ export const ComponentSourceSchema = Schema.Union([
 ]);
 export type ComponentSource = Schema.Schema.Type<typeof ComponentSourceSchema>;
 
-export const ComponentHttpPrefixSchema = Schema.TemplateLiteral([
-  "/",
-  Schema.String,
-]);
+export const ComponentHttpPrefixSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is `/${string}` =>
+      value.startsWith("/") &&
+      value.trim().length > 0 &&
+      value === value.trim() &&
+      !/\s/.test(value) &&
+      !hasControlCharacter(value),
+    {
+      message:
+        "Component httpPrefix must start with / and must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
 
 export const ComponentEnvValueSchema = EffectSchemaValueSchema;
 export const ComponentEnvSchema = Schema.Record(
@@ -253,13 +396,13 @@ export type ComponentOptions = Schema.Schema.Type<
 
 export const ComponentUseSchema = Schema.Struct({
   _tag: Schema.Literal("ComponentUse"),
-  id: Schema.String,
+  id: ComponentIdentityStringSchema,
   source: ComponentSourceSchema,
-  name: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(ComponentIdentityStringSchema),
   env: Schema.optionalKey(ComponentEnvSchema),
   httpPrefix: Schema.optionalKey(ComponentHttpPrefixSchema),
   options: Schema.optionalKey(ComponentOptionsSchema),
-  test: Schema.optionalKey(Schema.String),
+  test: Schema.optionalKey(ComponentTestImportStringSchema),
 });
 export type ComponentUse = Schema.Schema.Type<typeof ComponentUseSchema>;
 
@@ -394,10 +537,10 @@ export const FunctionDeclarationSchema = Schema.Struct({
 
 export const GroupDeclarationSchema = Schema.Struct({
   _tag: Schema.Literal("Group"),
-  name: Schema.String,
-  module: Schema.optionalKey(Schema.String),
+  name: GroupNameSchema,
+  module: Schema.optionalKey(ModuleStringSchema),
   runtime: Schema.optionalKey(RuntimeEnvironmentSchema),
-  functions: Schema.Record(Schema.String, FunctionDeclarationSchema),
+  functions: Schema.Record(FunctionExportNameSchema, FunctionDeclarationSchema),
 }) as PublicSchema<GroupDeclaration>;
 
 export const ComponentUseCarrierSchema = Schema.ObjectKeyword.pipe(
@@ -414,9 +557,9 @@ export const ComponentDeclarationSchema = Schema.Union([
 
 export const AppDeclarationSchema = Schema.Struct({
   _tag: Schema.Literal("App"),
-  module: Schema.optionalKey(Schema.UndefinedOr(Schema.String)),
+  module: Schema.optionalKey(Schema.UndefinedOr(ModuleStringSchema)),
   schema: Schema.optionalKey(Schema.UndefinedOr(SchemaDeclarationSchema)),
-  groups: Schema.Record(Schema.String, GroupDeclarationSchema),
+  groups: Schema.Record(GroupNameSchema, GroupDeclarationSchema),
   http: Schema.optionalKey(Schema.UndefinedOr(HttpDeclarationSchema)),
   components: Schema.optionalKey(
     Schema.UndefinedOr(
@@ -679,13 +822,14 @@ export const defineGroup = <
     readonly module?: string;
     readonly runtime?: RuntimeEnvironment;
   } = {},
-): GroupDeclaration<Name, Functions> => ({
-  _tag: "Group",
-  name,
-  ...(options.module === undefined ? {} : { module: options.module }),
-  ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
-  functions,
-});
+): GroupDeclaration<Name, Functions> =>
+  Schema.decodeUnknownSync(GroupDeclarationSchema)({
+    _tag: "Group",
+    name,
+    ...(options.module === undefined ? {} : { module: options.module }),
+    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+    functions,
+  }) as GroupDeclaration<Name, Functions>;
 
 export namespace Group {
   export const make = defineGroup;
@@ -1330,7 +1474,8 @@ const assertQueryHandlerUsesClock = (
   }
 };
 
-export const compileApp = (app: AppDeclaration): FileMap => {
+export const compileApp = (input: AppDeclaration): FileMap => {
+  const app = Schema.decodeUnknownSync(AppDeclarationSchema)(input);
   const files = new Map<string, string>();
   files.set("convex/_alchemy/runtime.ts", emitRuntime());
   files.set("convex/_alchemy/schema.ts", emitSchema(app.schema));

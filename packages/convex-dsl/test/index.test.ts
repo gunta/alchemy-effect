@@ -445,6 +445,78 @@ describe("@alchemy/convex", () => {
     ).toThrow(/Group key "messages" must match group.name "notes"/);
   });
 
+  it("rejects invalid group and function identity metadata before generating wrappers", () => {
+    expect(() => defineGroup(" ", {})).toThrow(/group names/i);
+    expect(() => defineGroup("admin/search", {})).toThrow(/group names/i);
+    expect(() =>
+      defineGroup("notes", {
+        "bad name": query({ handler: "badName" }),
+      }),
+    ).toThrow(/function export names/i);
+    expect(() =>
+      defineGroup("notes", {
+        "9bad": query({ handler: "bad" }),
+      }),
+    ).toThrow(/function export names/i);
+    expect(() =>
+      defineGroup("notes", {
+        class: query({ handler: "class" }),
+      }),
+    ).toThrow(/function export names/i);
+    expect(() =>
+      Schema.decodeUnknownSync(AppDeclarationSchema)({
+        _tag: "App",
+        groups: {
+          "bad/name": {
+            _tag: "Group",
+            name: "bad/name",
+            functions: {},
+          },
+        },
+      }),
+    ).toThrow(/group names/i);
+  });
+
+  it("rejects invalid app and group module strings before generating wrappers", () => {
+    const notes = defineGroup("notes", {
+      list: query({ handler: "list" }),
+    });
+
+    expect(() =>
+      compileApp(
+        defineApp({
+          module: " ",
+          groups: { notes },
+        }),
+      ),
+    ).toThrow(/module strings/i);
+    expect(() =>
+      defineGroup(
+        "notes",
+        {
+          list: query({ handler: "list" }),
+        },
+        { module: "notes\u0000.ts" },
+      ),
+    ).toThrow(/module strings/i);
+    expect(() =>
+      Schema.decodeUnknownSync(AppDeclarationSchema)({
+        _tag: "App",
+        module: "/Users/demo/project/src/convex/app.ts",
+        groups: {
+          notes: {
+            _tag: "Group",
+            name: "notes",
+            module: "\n",
+            functions: {
+              list: { _tag: "Function", kind: "query", handler: "list" },
+            },
+          },
+        },
+      }),
+    ).toThrow(/module strings/i);
+  });
+
   it("rejects scalar function args instead of silently wrapping them", () => {
     const notes = defineGroup("notes", {
       get: query({
@@ -515,6 +587,74 @@ describe("@alchemy/convex", () => {
     expect(files.get("convex/_alchemy/manifest.json")).toContain(
       '"./components/search/convex.config.ts"',
     );
+  });
+
+  it("rejects invalid component source metadata at declaration boundaries", () => {
+    expect(() =>
+      defineComponentUse("blank-package", {
+        source: { package: "   " },
+        name: "blankPackage",
+      }),
+    ).toThrow(/blank/);
+
+    expect(() =>
+      defineComponentUse("control-local", {
+        source: { local: "components/search\u0000" },
+        name: "controlLocal",
+      }),
+    ).toThrow(/control/);
+
+    expect(() =>
+      defineComponentUse("blank-config-export", {
+        source: {
+          package: "search-component",
+          configExport: "",
+        },
+        name: "blankConfigExport",
+      }),
+    ).toThrow(/blank/);
+  });
+
+  it("rejects invalid component identity and option metadata at declaration boundaries", () => {
+    expect(() =>
+      defineComponentUse("   ", {
+        source: { package: "@convex-dev/rag" },
+      }),
+    ).toThrow(/Component identity/);
+
+    expect(() =>
+      defineComponentUse("rag search", {
+        source: { package: "@convex-dev/rag" },
+      }),
+    ).toThrow(/whitespace/);
+
+    expect(() =>
+      defineComponentUse("rag", {
+        source: { package: "@convex-dev/rag" },
+        name: "rag\u0000search",
+      }),
+    ).toThrow(/Component identity/);
+
+    expect(() =>
+      defineComponentUse("rag", {
+        source: { package: "@convex-dev/rag" },
+        name: "rag search",
+      }),
+    ).toThrow(/whitespace/);
+
+    expect(() =>
+      defineComponentUse("rag", {
+        source: { package: "@convex-dev/rag" },
+        httpPrefix: "/rag\u0000" as `/${string}`,
+      }),
+    ).toThrow(/httpPrefix/);
+
+    expect(() =>
+      defineComponentUse("rag", {
+        source: { package: "@convex-dev/rag" },
+        test: "   ",
+      }),
+    ).toThrow(/test import strings/);
   });
 
   it("merges migration codegen and installs the migrations component", () => {

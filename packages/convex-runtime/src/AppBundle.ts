@@ -1034,20 +1034,6 @@ const localComponentDefinitionPath = (
   root: string,
 ) => posixPath(path.relative(rootComponentPath, root));
 
-const localComponentDefinitionNode = (
-  path: Path.Path,
-  rootComponentPath: string,
-  source: Extract<ComponentUse["source"], { readonly local: string }>,
-): LocalComponentDefinitionNode => {
-  const root = componentRootPath(path, source);
-  return {
-    root,
-    configPath: componentConfigPath(path, source),
-    definitionPath: localComponentDefinitionPath(path, rootComponentPath, root),
-    importSpecifier: componentSourceImportSpecifier(source),
-  };
-};
-
 const componentConfigPathCandidates = (
   path: Path.Path,
   configPath: string,
@@ -1063,6 +1049,66 @@ const componentConfigPathCandidates = (
       : [`${configPath}.js`, `${configPath}.ts`]),
   ];
 };
+
+const localComponentConfigPathCandidates = (
+  path: Path.Path,
+  source: Extract<ComponentUse["source"], { readonly local: string }>,
+): ReadonlyArray<string> => {
+  const configuredPath = componentConfigPath(path, source);
+  if (source.configPath !== undefined) {
+    return componentConfigPathCandidates(path, configuredPath);
+  }
+  const root = componentRootPath(path, source);
+  return [
+    path.join(root, "convex.config.ts"),
+    path.join(root, "convex.config.js"),
+  ];
+};
+
+const resolveLocalComponentConfigPath = (
+  path: Path.Path,
+  source: Extract<ComponentUse["source"], { readonly local: string }>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const configuredPath = componentConfigPath(path, source);
+    const candidates = localComponentConfigPathCandidates(path, source);
+    for (const candidate of candidates) {
+      const exists = yield* fs
+        .exists(candidate)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
+      if (exists) return candidate;
+    }
+    return yield* Effect.fail(
+      new Error(
+        `Component config ${configuredPath} could not be found. Tried: ${candidates.join(", ")}`,
+      ),
+    );
+  });
+
+const localComponentDefinitionNode = (
+  path: Path.Path,
+  rootComponentPath: string,
+  source: Extract<ComponentUse["source"], { readonly local: string }>,
+): Effect.Effect<
+  LocalComponentDefinitionNode,
+  unknown,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const configPath = yield* resolveLocalComponentConfigPath(path, source);
+    const root = componentRootPath(path, source);
+    return {
+      root,
+      configPath,
+      definitionPath: localComponentDefinitionPath(
+        path,
+        rootComponentPath,
+        root,
+      ),
+      importSpecifier: componentSourceImportSpecifier(source),
+    };
+  });
 
 const esbuildErrorTexts = (cause: unknown): ReadonlyArray<string> => {
   if (
@@ -1143,25 +1189,51 @@ const resolvePackageComponentConfigPath = (
   importSpecifier: string,
 ) =>
   Effect.gen(function* () {
-    const candidates = componentConfigPathCandidates(path, importSpecifier);
+    const candidates = [
+      ...componentConfigPathCandidates(path, importSpecifier).map(
+        (specifier) => ({
+          specifier,
+          requireConfigModule: false,
+        }),
+      ),
+      ...(importSpecifier === `${packageName}/convex.config.js`
+        ? [
+            {
+              specifier: packageName,
+              requireConfigModule: true,
+            },
+          ]
+        : []),
+    ];
     for (const candidate of candidates) {
       const resolved = yield* resolvePackageComponentConfigCandidate(
         path,
         projectRoot,
-        candidate,
+        candidate.specifier,
       ).pipe(
         Effect.map((configPath) => ({ _tag: "found" as const, configPath })),
         Effect.catch((cause) =>
-          isEsbuildResolveMiss(cause, candidate)
+          isEsbuildResolveMiss(cause, candidate.specifier)
             ? Effect.succeed({ _tag: "missing" as const })
             : Effect.fail(cause),
         ),
       );
-      if (resolved._tag === "found") return resolved.configPath;
+      if (resolved._tag === "found") {
+        const resolvedBase =
+          posixPath(resolved.configPath).split("/").at(-1) ??
+          resolved.configPath;
+        if (
+          candidate.requireConfigModule &&
+          !resolvedBase.includes(".config.")
+        ) {
+          continue;
+        }
+        return resolved.configPath;
+      }
     }
     return yield* Effect.fail(
       new Error(
-        `Component package "${packageName}" could not find a component config. Tried: ${candidates.join(", ")}`,
+        `Component package "${packageName}" could not find a component config. Tried: ${candidates.map((candidate) => candidate.specifier).join(", ")}`,
       ),
     );
   });
@@ -1220,6 +1292,20 @@ const componentEntryExtensions = new Set([
   ".jsx",
 ]);
 
+const validateComponentDefinitionEntryPath = (
+  path: Path.Path,
+  entryPath: string,
+) =>
+  Effect.gen(function* () {
+    const extension = path.extname(entryPath);
+    if (componentEntryExtensions.has(extension)) return;
+    return yield* Effect.fail(
+      new Error(
+        `Component config ${entryPath} must be a JavaScript or TypeScript module.`,
+      ),
+    );
+  });
+
 const componentOutputPathFromEsbuild = (outdir: string, outputPath: string) => {
   const prefix = `${outdir.replace(/\/$/, "")}/`;
   return posixPath(
@@ -1252,15 +1338,19 @@ const componentDefinitionImportsFromMetafile = (
   return input[1].imports
     .filter((imported) => {
       const specifier = imported.original ?? imported.path;
+      const resolvedBase =
+        posixPath(imported.path).split("/").at(-1) ?? imported.path;
+      const resolvedConfigModule = resolvedBase.includes(".config.");
       const localSpecifier =
         specifier.startsWith(".") ||
         specifier.startsWith("/") ||
         path.isAbsolute(specifier);
       const packageComponentSpecifier =
-        !localSpecifier && /(?:^|\/)convex\.config(?:\.|$)/.test(specifier);
+        !localSpecifier &&
+        (/(?:^|\/)convex\.config(?:\.|$)/.test(specifier) ||
+          resolvedConfigModule);
       return (
-        imported.path.includes(".config.") &&
-        (localSpecifier || packageComponentSpecifier)
+        resolvedConfigModule && (localSpecifier || packageComponentSpecifier)
       );
     })
     .map((imported) => ({
@@ -1313,12 +1403,13 @@ const componentDefinitionDependencyPlugin = (
 ): esbuild.Plugin => ({
   name: "alchemy-convex-component-definition-dependencies",
   setup(build) {
-    build.onResolve({ filter: /.*\.config.*/ }, (args) => {
+    build.onResolve({ filter: /.*/ }, (args) => {
       if (args.kind === "entry-point") return undefined;
       const aliasedImport = aliases.get(args.path);
       if (aliasedImport !== undefined) {
         return { path: aliasedImport, external: true };
       }
+      if (!args.path.includes(".config.")) return undefined;
       const resolved = path.resolve(args.resolveDir, args.path);
       const extension = path.extname(resolved);
       const candidates = [
@@ -1358,30 +1449,33 @@ const buildPhysicalDefinition = (
   },
   plugins: ReadonlyArray<esbuild.Plugin> = [],
 ): Effect.Effect<PhysicalDefinitionBuildResult, unknown> =>
-  Effect.tryPromise({
-    try: () =>
-      esbuild.build({
-        absWorkingDir: options.projectRoot,
-        bundle: true,
-        conditions: ["convex", "module"],
-        define: productionDefine,
-        entryPoints: [entryPath],
-        format: "esm",
-        jsx: "automatic",
-        keepNames: true,
-        logLevel: "silent",
-        outfile: options.outfile,
-        platform: "browser",
-        metafile: true,
-        minify: true,
-        plugins: [...plugins],
-        sourcemap: options.generateSourceMaps ? "external" : false,
-        sourcesContent: options.includeSourcesContent,
-        target: "esnext",
-        treeShaking: true,
-        write: false,
-      }) as Promise<PhysicalDefinitionBuildResult>,
-    catch: (cause) => cause,
+  Effect.gen(function* () {
+    yield* validateComponentDefinitionEntryPath(options.path, entryPath);
+    return yield* Effect.tryPromise({
+      try: () =>
+        esbuild.build({
+          absWorkingDir: options.projectRoot,
+          bundle: true,
+          conditions: ["convex", "module"],
+          define: productionDefine,
+          entryPoints: [entryPath],
+          format: "esm",
+          jsx: "automatic",
+          keepNames: true,
+          logLevel: "silent",
+          outfile: options.outfile,
+          platform: "browser",
+          metafile: true,
+          minify: true,
+          plugins: [...plugins],
+          sourcemap: options.generateSourceMaps ? "external" : false,
+          sourcesContent: options.includeSourcesContent,
+          target: "esnext",
+          treeShaking: true,
+          write: false,
+        }) as Promise<PhysicalDefinitionBuildResult>,
+      catch: (cause) => cause,
+    });
   });
 
 const moduleFromPhysicalDefinitionBuild = (
@@ -1652,7 +1746,7 @@ const bundleLocalComponentDefinitions = (
             catch: (cause) => cause,
           });
           if (localComponentSource(component.source)) {
-            return localComponentDefinitionNode(
+            return yield* localComponentDefinitionNode(
               path,
               rootComponentPath,
               component.source,

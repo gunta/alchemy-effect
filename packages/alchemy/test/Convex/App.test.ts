@@ -123,6 +123,109 @@ describe("Convex.App", () => {
     }).pipe(Effect.provide(AppProvider()));
   });
 
+  it.effect("canonicalizes deployment URLs before deployer calls", () => {
+    const calls: unknown[] = [];
+    const deployer: ConvexDeployer<{ readonly name: string }> = {
+      _tag: "RuntimeDeployer",
+      deploy: (input) => {
+        calls.push(input);
+        return Effect.succeed({
+          bundleHash: "hash-canonical-url",
+          deployedAt: "2026-05-20T00:00:00.000Z",
+          functionManifest: [],
+        });
+      },
+    };
+
+    return Effect.gen(function* () {
+      const provider = yield* App.Provider;
+      const attrs = yield* provider.reconcile({
+        id: "Backend",
+        instanceId: "i",
+        news: {
+          deployment: {
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud///",
+          },
+          source: { name: "app" },
+          deployer,
+        },
+        olds: undefined,
+        output: undefined,
+        session,
+        bindings: [],
+      });
+
+      expect(attrs.deploymentUrl).toBe("https://calm-cat-123.convex.cloud");
+      expect(calls).toEqual([
+        {
+          deployment: {
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+          },
+          source: { name: "app" },
+          dryRun: undefined,
+        },
+      ]);
+    }).pipe(Effect.provide(AppProvider()));
+  });
+
+  it.effect(
+    "canonicalizes previous deployment URLs before deployer calls",
+    () => {
+      const calls: unknown[] = [];
+      const deployer: ConvexDeployer<{ readonly name: string }> = {
+        _tag: "RuntimeDeployer",
+        deploy: (input) => {
+          calls.push(input);
+          return Effect.succeed({
+            bundleHash: "hash-next",
+            deployedAt: "2026-05-20T01:00:00.000Z",
+            functionManifest: [],
+          });
+        },
+      };
+
+      return Effect.gen(function* () {
+        const provider = yield* App.Provider;
+        yield* provider.reconcile({
+          id: "Backend",
+          instanceId: "i",
+          news: {
+            deployment,
+            source: { name: "app" },
+            deployer,
+          },
+          olds: undefined,
+          output: {
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud///",
+            bundleHash: "hash-previous",
+            deployedAt: "2026-05-20T00:00:00.000Z",
+            functionManifest: [],
+          },
+          session,
+          bindings: [],
+        });
+
+        expect(calls).toEqual([
+          {
+            deployment,
+            source: { name: "app" },
+            dryRun: undefined,
+            previous: {
+              deploymentName: "calm-cat-123",
+              deploymentUrl: "https://calm-cat-123.convex.cloud",
+              bundleHash: "hash-previous",
+              deployedAt: "2026-05-20T00:00:00.000Z",
+              functionManifest: [],
+            },
+          },
+        ]);
+      }).pipe(Effect.provide(AppProvider()));
+    },
+  );
+
   it.effect(
     "passes previous output to deployers and stores deployer state",
     () => {
@@ -180,6 +283,170 @@ describe("Convex.App", () => {
             previous,
           },
         ]);
+      }).pipe(Effect.provide(AppProvider()));
+    },
+  );
+
+  it.effect(
+    "rejects malformed previous output before calling the deployer",
+    () => {
+      let calls = 0;
+      const notes: string[] = [];
+      const deployer: ConvexDeployer<{ readonly name: string }> = {
+        _tag: "RuntimeDeployer",
+        deploy: () => {
+          calls += 1;
+          return Effect.succeed({
+            bundleHash: "hash-next",
+            deployedAt: "2026-05-20T01:00:00.000Z",
+            functionManifest: [],
+          });
+        },
+      };
+
+      return Effect.gen(function* () {
+        const provider = yield* App.Provider;
+        const failure = yield* provider
+          .reconcile({
+            id: "Backend",
+            instanceId: "i",
+            news: {
+              deployment,
+              source: { name: "app" },
+              deployer,
+            },
+            olds: undefined,
+            output: {
+              deploymentName: "calm-cat-123",
+              deploymentUrl: "https://calm-cat-123.convex.cloud",
+              bundleHash: 42,
+              deployedAt: "2026-05-20T00:00:00.000Z",
+              functionManifest: [],
+            } as never,
+            session: recordingSession(notes),
+            bindings: [],
+          })
+          .pipe(Effect.flip);
+
+        expect(String(failure)).toContain("bundleHash");
+        expect(calls).toBe(0);
+        expect(notes).toEqual([]);
+      }).pipe(Effect.provide(AppProvider()));
+    },
+  );
+
+  it.effect(
+    "rejects malformed deployment references before calling the deployer",
+    () => {
+      let calls = 0;
+      const notes: string[] = [];
+      const deployer: ConvexDeployer<{ readonly name: string }> = {
+        _tag: "RuntimeDeployer",
+        deploy: () => {
+          calls += 1;
+          return Effect.succeed({
+            bundleHash: "hash-next",
+            deployedAt: "2026-05-20T01:00:00.000Z",
+            functionManifest: [],
+          });
+        },
+      };
+
+      return Effect.gen(function* () {
+        const provider = yield* App.Provider;
+        const stringDeploymentFailure = yield* provider
+          .reconcile({
+            id: "Backend",
+            instanceId: "i",
+            news: {
+              deployment: "calm-cat-123",
+              source: { name: "app" },
+              deployer,
+            } as never,
+            olds: undefined,
+            output: undefined,
+            session: recordingSession(notes),
+            bindings: [],
+          })
+          .pipe(Effect.flip);
+        const urlFailure = yield* provider
+          .reconcile({
+            id: "Backend",
+            instanceId: "i",
+            news: {
+              deployment: {
+                deploymentName: "calm-cat-123",
+                deploymentUrl: "https://calm-cat-123.convex.cloud/path",
+              },
+              source: { name: "app" },
+              deployer,
+            },
+            olds: undefined,
+            output: undefined,
+            session: recordingSession(notes),
+            bindings: [],
+          })
+          .pipe(Effect.flip);
+        const invalidUrlFailure = yield* provider
+          .reconcile({
+            id: "Backend",
+            instanceId: "i",
+            news: {
+              deployment: {
+                deploymentName: "calm-cat-123",
+                deploymentUrl: "not a url",
+              },
+              source: { name: "app" },
+              deployer,
+            },
+            olds: undefined,
+            output: undefined,
+            session: recordingSession(notes),
+            bindings: [],
+          })
+          .pipe(Effect.flip);
+
+        expect(String(stringDeploymentFailure)).toContain("deploymentName");
+        expect(String(urlFailure)).toContain("deploymentUrl");
+        expect(String(invalidUrlFailure)).toContain("deploymentUrl");
+        expect(calls).toBe(0);
+        expect(notes).toEqual([]);
+      }).pipe(Effect.provide(AppProvider()));
+    },
+  );
+
+  it.effect(
+    "rejects malformed deployer results before persisting app attrs",
+    () => {
+      const deployer: ConvexDeployer<{ readonly name: string }> = {
+        _tag: "RuntimeDeployer",
+        deploy: () =>
+          Effect.succeed({
+            bundleHash: "hash-next",
+            deployedAt: 123,
+            functionManifest: [{ path: "jobs:run", kind: "action" }],
+          } as never),
+      };
+
+      return Effect.gen(function* () {
+        const provider = yield* App.Provider;
+        const failure = yield* provider
+          .reconcile({
+            id: "Backend",
+            instanceId: "i",
+            news: {
+              deployment,
+              source: { name: "app" },
+              deployer,
+            },
+            olds: undefined,
+            output: undefined,
+            session,
+            bindings: [],
+          })
+          .pipe(Effect.flip);
+
+        expect(String(failure)).toContain("deployedAt");
       }).pipe(Effect.provide(AppProvider()));
     },
   );

@@ -35,6 +35,20 @@ export interface HttpDeclaration {
   readonly routes: Record<`/${string}`, HttpRouteDeclaration>;
 }
 
+const hasControlCharacter = (value: string) =>
+  /[\u0000-\u001F\u007F]/.test(value);
+
+const HttpRoutePathSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is `/${string}` =>
+      value.startsWith("/") && !/\s/.test(value) && !hasControlCharacter(value),
+    {
+      message:
+        "HTTP route paths must start with / and must not contain whitespace or control characters.",
+    },
+  ),
+);
+
 const isHttpApiSource = (
   value: unknown,
 ): value is HttpApiLike | HttpHandlerLike | Function =>
@@ -67,22 +81,25 @@ export const HttpRouteDeclarationSchema = Schema.Struct({
   api: Schema.optionalKey(HttpApiSourceSchema),
   layer: Schema.optionalKey(HttpLayerSchema),
   handler: Schema.optionalKey(HttpApiSourceSchema),
-});
+}).pipe(
+  Schema.refine(
+    (value) => value.api !== undefined || value.handler !== undefined,
+    { message: "HTTP routes must provide a handler or api." },
+  ),
+);
 
 export const HttpDeclarationSchema = Schema.Struct({
   _tag: Schema.Literal("HttpDeclaration"),
-  routes: Schema.Record(
-    Schema.TemplateLiteral(["/", Schema.String]),
-    HttpRouteDeclarationSchema,
-  ),
+  routes: Schema.Record(HttpRoutePathSchema, HttpRouteDeclarationSchema),
 }) as Schema.Decoder<HttpDeclaration>;
 
 export const defineHttp = (
   routes: Record<`/${string}`, HttpRouteDeclaration>,
-): HttpDeclaration => ({
-  _tag: "HttpDeclaration",
-  routes,
-});
+): HttpDeclaration =>
+  Schema.decodeUnknownSync(HttpDeclarationSchema)({
+    _tag: "HttpDeclaration",
+    routes,
+  });
 
 const isThenable = (value: unknown): value is Promise<Response> =>
   typeof value === "object" &&

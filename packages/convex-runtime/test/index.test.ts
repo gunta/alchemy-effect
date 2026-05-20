@@ -20,6 +20,7 @@ import {
   defineHttp,
   mutation,
   query,
+  type AppDeclaration,
 } from "@alchemy/convex";
 import {
   AppBundle,
@@ -1764,6 +1765,54 @@ describe("@alchemy/convex-runtime", () => {
           { path: "notes:list", kind: "query" },
           { path: "POST /api/notes", kind: "http" },
         ]);
+      }),
+    ));
+
+  it("rejects invalid HTTP route paths before runtime function manifests", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const failure = yield* AppBundler.bundleFromApp({
+          app: {
+            _tag: "App",
+            module: "/Users/demo/project/src/convex/app.ts",
+            groups: {},
+            http: {
+              _tag: "HttpDeclaration",
+              routes: {
+                "/api docs": {
+                  handler: () => new Response("bad"),
+                },
+              },
+            },
+          } as AppDeclaration,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("http");
+        expect(String(failure)).toContain("HTTP route paths");
+        expect(String(failure)).not.toContain("functionManifest");
+      }),
+    ));
+
+  it("rejects HTTP routes without a handler or api before runtime function manifests", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const failure = yield* AppBundler.bundleFromApp({
+          app: {
+            _tag: "App",
+            module: "/Users/demo/project/src/convex/app.ts",
+            groups: {},
+            http: {
+              _tag: "HttpDeclaration",
+              routes: {
+                "/empty": {},
+              },
+            },
+          } as AppDeclaration,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("http");
+        expect(String(failure)).toContain("handler or api");
+        expect(String(failure)).not.toContain("functionManifest");
       }),
     ));
 
@@ -5099,6 +5148,101 @@ describe("@alchemy/convex-runtime", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     ));
 
+  it("skips absent optional external package dependencies without failing inference", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-missing-optional-deps-",
+        });
+        const nodeModules = path.join(root, "node_modules");
+        const appModule = path.join(root, "app.ts");
+        const jobsModule = path.join(root, "jobs.ts");
+        yield* fs.makeDirectory(path.join(nodeModules, "@alchemy"), {
+          recursive: true,
+        });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/effect"),
+          path.join(nodeModules, "effect"),
+        );
+        yield* fs.symlink(
+          path.join(
+            cwd,
+            "packages/convex-runtime/node_modules/@alchemy/convex",
+          ),
+          path.join(nodeModules, "@alchemy/convex"),
+        );
+        yield* fs.makeDirectory(path.join(nodeModules, "primary-lib"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(nodeModules, "primary-lib", "package.json"),
+          JSON.stringify({
+            name: "primary-lib",
+            version: "1.0.0",
+            optionalDependencies: { "absent-optional-lib": "^2.0.0" },
+            peerDependencies: { "absent-peer-lib": "^3.0.0" },
+          }),
+        );
+        yield* fs.writeFileString(
+          jobsModule,
+          [
+            '"use node";',
+            'import primary from "primary-lib";',
+            "export const run = () => primary;",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          appModule,
+          [
+            "export default {",
+            "  groups: {",
+            "    jobs: {",
+            '      name: "jobs",',
+            "      functions: {",
+            '        run: { kind: "action", handler: () => null },',
+            "      },",
+            "    },",
+            "  },",
+            "};",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            module: appModule,
+            groups: {
+              jobs: defineGroup(
+                "jobs",
+                {
+                  run: action({ handler: "run" }),
+                },
+                { module: jobsModule },
+              ),
+            },
+          }),
+          projectRoot: root,
+          externalPackages: [
+            "primary-lib",
+            "absent-optional-lib",
+            "absent-peer-lib",
+          ],
+        });
+
+        expect(bundle.nodeDependencies).toEqual([
+          { name: "primary-lib", version: "1.0.0" },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
   it("fails fast when external package peer dependency metadata is malformed", () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -5976,6 +6120,398 @@ describe("@alchemy/convex-runtime", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     ));
 
+  it("externalizes explicit TypeScript local component config imports through dependency stubs", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-component-ts-config-import-",
+        });
+        const searchDir = path.join(root, "search");
+        const commonDir = path.join(root, "common");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(searchDir, { recursive: true });
+        yield* fs.makeDirectory(commonDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(searchDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'import common from "../common/convex.config.ts";',
+            "const app = defineApp();",
+            'app.use(common, { name: "common" });',
+            "export default app;",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(commonDir, "convex.config.ts"),
+          [
+            'console.log("explicit ts common config marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("search", {
+                source: { local: searchDir },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../common",
+            dependencies: [],
+          },
+          {
+            definitionPath: "../search",
+            dependencies: ["../common"],
+          },
+        ]);
+        const searchDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../search",
+        );
+        const commonDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../common",
+        );
+        expect(searchDefinition?.definition.source).toContain("_componentDeps");
+        expect(searchDefinition?.definition.source).not.toContain(
+          "explicit ts common config marker",
+        );
+        expect(commonDefinition?.definition.source).toContain(
+          "explicit ts common config marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("resolves explicit extensionless local component configs through the Convex CLI fallback", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-local-component-config-fallback-",
+        });
+        const componentDir = path.join(root, "component");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(componentDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("local config fallback marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              component: defineComponentUse("component", {
+                source: {
+                  local: componentDir,
+                  configPath: "convex.config",
+                },
+                name: "component",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../component",
+            definition: {
+              path: "convex.config.js",
+            },
+          },
+        ]);
+        expect(bundle.componentDefinitions[0]?.definition.source).toContain(
+          "local config fallback marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("resolves default local component configs from JavaScript files", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-local-component-default-js-config-",
+        });
+        const componentDir = path.join(root, "component");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(componentDir, "convex.config.js"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("local default js config marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              component: defineComponentUse("component", {
+                source: { local: componentDir },
+                name: "component",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../component",
+            definition: {
+              path: "convex.config.js",
+            },
+          },
+        ]);
+        expect(bundle.componentDefinitions[0]?.definition.source).toContain(
+          "local default js config marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("prefers TypeScript default local component configs over JavaScript fallbacks", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix:
+            "alchemy-convex-runtime-local-component-default-config-precedence-",
+        });
+        const componentDir = path.join(root, "component");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(componentDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("typescript default config marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(componentDir, "convex.config.js"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("javascript default config marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              component: defineComponentUse("component", {
+                source: { local: componentDir },
+                name: "component",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../component",
+            definition: {
+              path: "convex.config.js",
+            },
+          },
+        ]);
+        expect(bundle.componentDefinitions[0]?.definition.source).toContain(
+          "typescript default config marker",
+        );
+        expect(bundle.componentDefinitions[0]?.definition.source).not.toContain(
+          "javascript default config marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("reports default local component config candidates when missing", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix:
+            "alchemy-convex-runtime-missing-default-local-component-config-",
+        });
+        const componentDir = path.join(root, "component");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+
+        const failure = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              component: defineComponentUse("component", {
+                source: { local: componentDir },
+                name: "component",
+              }),
+            },
+          }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("convex.config.ts");
+        expect(String(failure)).toContain("convex.config.js");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("reports explicit extensionless local component config candidates when missing", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix:
+            "alchemy-convex-runtime-missing-local-component-config-fallback-",
+        });
+        const componentDir = path.join(root, "component");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+
+        const failure = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              component: defineComponentUse("component", {
+                source: {
+                  local: componentDir,
+                  configPath: "convex.config",
+                },
+                name: "component",
+              }),
+            },
+          }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("convex.config");
+        expect(String(failure)).toContain("convex.config.js");
+        expect(String(failure)).toContain("convex.config.ts");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("externalizes extensionless local component config imports through dependency stubs", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix:
+            "alchemy-convex-runtime-component-extensionless-config-import-",
+        });
+        const searchDir = path.join(root, "search");
+        const commonDir = path.join(root, "common");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(searchDir, { recursive: true });
+        yield* fs.makeDirectory(commonDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(searchDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'import common from "../common/convex.config";',
+            "const app = defineApp();",
+            'app.use(common, { name: "common" });',
+            "export default app;",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(commonDir, "convex.config.ts"),
+          [
+            'console.log("extensionless common config marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("search", {
+                source: { local: searchDir },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../common",
+            dependencies: [],
+          },
+          {
+            definitionPath: "../search",
+            dependencies: ["../common"],
+          },
+        ]);
+        const searchDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../search",
+        );
+        const commonDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../common",
+        );
+        expect(searchDefinition?.definition.source).toContain("_componentDeps");
+        expect(searchDefinition?.definition.source).not.toContain(
+          "extensionless common config marker",
+        );
+        expect(commonDefinition?.definition.source).toContain(
+          "extensionless common config marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
   it("bundles package component definitions as deploy2 component state", () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -6083,6 +6619,184 @@ describe("@alchemy/convex-runtime", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     ));
 
+  it("resolves hoisted package component configs from ancestor node_modules", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const workspace = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-hoisted-package-component-",
+        });
+        const projectRoot = path.join(workspace, "apps", "api");
+        const nodeModules = path.join(workspace, "node_modules");
+        const packageDir = path.join(nodeModules, "hoisted-component");
+        yield* fs.makeDirectory(projectRoot, { recursive: true });
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "hoisted-component",
+            version: "1.0.0",
+            exports: {
+              "./convex.config.js": "./convex.config.ts",
+            },
+          }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'const marker = "hoisted package component marker";',
+            "console.log(marker);",
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "schema.ts"),
+          [
+            'import { defineSchema, defineTable } from "convex/server";',
+            'import { v } from "convex/values";',
+            "export default defineSchema({",
+            "  entries: defineTable({ text: v.string() }),",
+            "});",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "tasks.ts"),
+          [
+            'import { queryGeneric } from "convex/server";',
+            "export const list = queryGeneric({",
+            "  args: {},",
+            "  handler: () => [],",
+            "});",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              hoisted: defineComponentUse("hoisted-component", {
+                source: { package: "hoisted-component" },
+                name: "hoisted",
+              }),
+            },
+          }),
+          projectRoot,
+        });
+
+        expect(bundle.definitionDependencies).toEqual([
+          "../../../node_modules/hoisted-component",
+        ]);
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../../../node_modules/hoisted-component",
+            definition: { path: "convex.config.js" },
+            schema: { path: "schema.js" },
+            functions: [{ path: "tasks.js" }],
+          },
+        ]);
+        expect(bundle.componentDefinitions[0]?.definition.source).toContain(
+          "hoisted package component marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("resolves scoped hoisted package components relative to custom functions directories", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const workspace = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-scoped-hoisted-component-",
+        });
+        const projectRoot = path.join(workspace, "apps", "api");
+        const nodeModules = path.join(workspace, "node_modules");
+        const scopeDir = path.join(nodeModules, "@acme");
+        const packageDir = path.join(scopeDir, "search-component");
+        yield* fs.makeDirectory(path.join(projectRoot, "src", "convex"), {
+          recursive: true,
+        });
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(projectRoot, "convex.json"),
+          JSON.stringify({ functions: "src/convex" }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "@acme/search-component",
+            version: "1.0.0",
+            exports: {
+              "./convex.config.js": "./src/convex.config.ts",
+            },
+          }),
+        );
+        yield* fs.makeDirectory(path.join(packageDir, "src"));
+        yield* fs.writeFileString(
+          path.join(packageDir, "src", "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'const marker = "scoped hoisted component marker";',
+            "console.log(marker);",
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "src", "schema.ts"),
+          [
+            'import { defineSchema, defineTable } from "convex/server";',
+            'import { v } from "convex/values";',
+            "export default defineSchema({",
+            "  entries: defineTable({ text: v.string() }),",
+            "});",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("@acme/search-component", {
+                source: { package: "@acme/search-component" },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot,
+        });
+
+        expect(bundle.definitionDependencies).toEqual([
+          "../../../../node_modules/@acme/search-component/src",
+        ]);
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath:
+              "../../../../node_modules/@acme/search-component/src",
+            definition: { path: "convex.config.js" },
+            schema: { path: "schema.js" },
+            functions: [],
+          },
+        ]);
+        expect(bundle.componentDefinitions[0]?.definition.source).toContain(
+          "scoped hoisted component marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
   it("tracks package component dependencies imported by local component definitions", () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -6168,6 +6882,291 @@ describe("@alchemy/convex-runtime", () => {
         );
         expect(packageDefinition?.definition.source).toContain(
           "nested package component marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("tracks package root exports imported by local component definitions as component dependencies", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-root-export-component-",
+        });
+        const searchDir = path.join(root, "search");
+        const nodeModules = path.join(root, "node_modules");
+        const packageDir = path.join(nodeModules, "root-export-component");
+        const packageSourceDir = path.join(packageDir, "src");
+        yield* fs.makeDirectory(searchDir, { recursive: true });
+        yield* fs.makeDirectory(packageSourceDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "root-export-component",
+            version: "1.0.0",
+            exports: {
+              ".": "./src/convex.config.ts",
+            },
+          }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageSourceDir, "convex.config.ts"),
+          [
+            'console.log("root export package component marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(searchDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'import rootExport from "root-export-component";',
+            "const app = defineApp();",
+            'app.use(rootExport, { name: "rootExport" });',
+            "export default app;",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("search", {
+                source: { local: searchDir },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../node_modules/root-export-component/src",
+            dependencies: [],
+          },
+          {
+            definitionPath: "../search",
+            dependencies: ["../node_modules/root-export-component/src"],
+          },
+        ]);
+        const searchDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../search",
+        );
+        const packageDefinition = bundle.componentDefinitions.find(
+          (definition) =>
+            definition.definitionPath ===
+            "../node_modules/root-export-component/src",
+        );
+        expect(searchDefinition?.definition.source).toContain("_componentDeps");
+        expect(searchDefinition?.definition.source).not.toContain(
+          "root export package component marker",
+        );
+        expect(packageDefinition?.definition.source).toContain(
+          "root export package component marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("uses Convex conditional package root exports for local component dependency stubs", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-conditional-root-component-",
+        });
+        const searchDir = path.join(root, "search");
+        const nodeModules = path.join(root, "node_modules");
+        const packageDir = path.join(nodeModules, "conditional-root-component");
+        const packageSourceDir = path.join(packageDir, "src");
+        yield* fs.makeDirectory(searchDir, { recursive: true });
+        yield* fs.makeDirectory(packageSourceDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "conditional-root-component",
+            version: "1.0.0",
+            exports: {
+              ".": {
+                convex: "./src/convex.config.ts",
+                default: "./src/default.js",
+              },
+            },
+          }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageSourceDir, "convex.config.ts"),
+          [
+            'console.log("conditional root convex component marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageSourceDir, "default.js"),
+          [
+            'console.log("conditional root default export marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(searchDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'import conditionalRoot from "conditional-root-component";',
+            "const app = defineApp();",
+            'app.use(conditionalRoot, { name: "conditionalRoot" });',
+            "export default app;",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("search", {
+                source: { local: searchDir },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../node_modules/conditional-root-component/src",
+            dependencies: [],
+          },
+          {
+            definitionPath: "../search",
+            dependencies: ["../node_modules/conditional-root-component/src"],
+          },
+        ]);
+        const searchDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../search",
+        );
+        const packageDefinition = bundle.componentDefinitions.find(
+          (definition) =>
+            definition.definitionPath ===
+            "../node_modules/conditional-root-component/src",
+        );
+        expect(searchDefinition?.definition.source).toContain("_componentDeps");
+        expect(searchDefinition?.definition.source).not.toContain(
+          "conditional root convex component marker",
+        );
+        expect(searchDefinition?.definition.source).not.toContain(
+          "conditional root default export marker",
+        );
+        expect(packageDefinition?.definition.source).toContain(
+          "conditional root convex component marker",
+        );
+        expect(packageDefinition?.definition.source).not.toContain(
+          "conditional root default export marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("tracks scoped package component dependencies imported by local component definitions", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-scoped-mixed-component-graph-",
+        });
+        const searchDir = path.join(root, "search");
+        const nodeModules = path.join(root, "node_modules");
+        const packageDir = path.join(nodeModules, "@acme", "nested-component");
+        yield* fs.makeDirectory(searchDir, { recursive: true });
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "@acme/nested-component",
+            version: "1.0.0",
+            exports: {
+              "./convex.config.js": "./convex.config.js",
+            },
+          }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "convex.config.js"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("scoped nested package component marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(searchDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'import nested from "@acme/nested-component/convex.config.js";',
+            "const app = defineApp();",
+            'app.use(nested, { name: "nested" });',
+            "export default app;",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("search", {
+                source: { local: searchDir },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.definitionDependencies).toEqual(["../search"]);
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../node_modules/@acme/nested-component",
+            dependencies: [],
+          },
+          {
+            definitionPath: "../search",
+            dependencies: ["../node_modules/@acme/nested-component"],
+          },
+        ]);
+        const packageDefinition = bundle.componentDefinitions.find(
+          (definition) =>
+            definition.definitionPath ===
+            "../node_modules/@acme/nested-component",
+        );
+        const searchDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../search",
+        );
+        expect(searchDefinition?.definition.source).toContain("_componentDeps");
+        expect(searchDefinition?.definition.source).not.toContain(
+          "scoped nested package component marker",
+        );
+        expect(packageDefinition?.definition.source).toContain(
+          "scoped nested package component marker",
         );
       }).pipe(Effect.provide(BunServices.layer)),
     ));
@@ -6423,6 +7422,182 @@ describe("@alchemy/convex-runtime", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     ));
 
+  it("resolves direct package component configs from Convex package root exports", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-root-export-direct-component-",
+        });
+        const nodeModules = path.join(root, "node_modules");
+        const packageDir = path.join(nodeModules, "root-direct-component");
+        const sourceDir = path.join(packageDir, "src");
+        yield* fs.makeDirectory(sourceDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "root-direct-component",
+            version: "1.0.0",
+            exports: {
+              ".": {
+                convex: "./src/convex.config.ts",
+                default: "./src/index.js",
+              },
+            },
+          }),
+        );
+        yield* fs.writeFileString(
+          path.join(sourceDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("root direct convex component marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(sourceDir, "index.js"),
+          [
+            'console.log("root direct default marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              rootDirect: defineComponentUse("root-direct-component", {
+                source: { package: "root-direct-component" },
+                name: "rootDirect",
+              }),
+            },
+          }),
+          projectRoot: root,
+        });
+
+        expect(bundle.definitionDependencies).toEqual([
+          "../node_modules/root-direct-component/src",
+        ]);
+        expect(bundle.definition?.source).toContain("_componentDeps");
+        expect(bundle.definition?.source).not.toContain(
+          "root direct convex component marker",
+        );
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../node_modules/root-direct-component/src",
+            definition: { path: "convex.config.js" },
+            dependencies: [],
+          },
+        ]);
+        expect(bundle.componentDefinitions[0]?.definition.source).toContain(
+          "root direct convex component marker",
+        );
+        expect(bundle.componentDefinitions[0]?.definition.source).not.toContain(
+          "root direct default marker",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("rejects non-JavaScript local component config entries", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-invalid-local-component-config-",
+        });
+        const componentDir = path.join(root, "component");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(componentDir, "convex.config.css"),
+          "body { color: red; }\n",
+        );
+
+        const failure = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              component: defineComponentUse("component", {
+                source: {
+                  local: componentDir,
+                  configPath: "convex.config.css",
+                },
+                name: "component",
+              }),
+            },
+          }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("convex.config.css");
+        expect(String(failure)).toContain("JavaScript or TypeScript");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("does not treat ordinary package root exports as default component configs", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-ordinary-root-direct-component-",
+        });
+        const packageDir = path.join(
+          root,
+          "node_modules",
+          "ordinary-root-component",
+        );
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "ordinary-root-component",
+            version: "1.0.0",
+            exports: {
+              ".": "./index.js",
+            },
+          }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "index.js"),
+          [
+            'console.log("ordinary package root marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+
+        const failure = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              ordinary: defineComponentUse("ordinary-root-component", {
+                source: { package: "ordinary-root-component" },
+                name: "ordinary",
+              }),
+            },
+          }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(failure)).toContain("ordinary-root-component");
+        expect(String(failure)).toContain("could not find a component config");
+        expect(String(failure)).toContain("ordinary-root-component");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
   it("fails fast for invalid package component config references", () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -6483,6 +7658,31 @@ describe("@alchemy/convex-runtime", () => {
         }).pipe(Effect.flip);
         expect(String(missingConfigFailure)).toContain("empty-component");
         expect(String(missingConfigFailure)).toContain("component config");
+
+        const missingExtensionlessConfigFailure =
+          yield* AppBundler.bundleFromApp({
+            app: defineApp({
+              components: {
+                empty: defineComponentUse("empty-component", {
+                  source: {
+                    package: "empty-component",
+                    configExport: "empty-component/custom-config",
+                  },
+                  name: "empty",
+                }),
+              },
+            }),
+            projectRoot: root,
+          }).pipe(Effect.flip);
+        expect(String(missingExtensionlessConfigFailure)).toContain(
+          "empty-component/custom-config",
+        );
+        expect(String(missingExtensionlessConfigFailure)).toContain(
+          "empty-component/custom-config.js",
+        );
+        expect(String(missingExtensionlessConfigFailure)).toContain(
+          "empty-component/custom-config.ts",
+        );
 
         const brokenPackageDir = path.join(
           root,
@@ -6678,6 +7878,86 @@ describe("@alchemy/convex-runtime", () => {
           "tasks.js",
         ]);
         expect(component?.functions[0]?.source).toContain("symlink-root");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("preserves local component dependency stubs through symlinked project roots", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const workspace = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-component-symlink-deps-",
+        });
+        const realRoot = path.join(workspace, "real");
+        const linkedRoot = path.join(workspace, "linked");
+        const searchDir = path.join(realRoot, "search");
+        const commonDir = path.join(realRoot, "common");
+        const nodeModules = path.join(realRoot, "node_modules");
+        yield* fs.makeDirectory(searchDir, { recursive: true });
+        yield* fs.makeDirectory(commonDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(realRoot, linkedRoot);
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(searchDir, "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'import common from "../common/convex.config";',
+            "const app = defineApp();",
+            'app.use(common, { name: "common" });',
+            "export default app;",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(commonDir, "convex.config.ts"),
+          [
+            'console.log("symlink common config marker");',
+            "export default {};",
+            "",
+          ].join("\n"),
+        );
+
+        const bundle = yield* AppBundler.bundleFromApp({
+          app: defineApp({
+            components: {
+              search: defineComponentUse("search", {
+                source: { local: path.join(linkedRoot, "search") },
+                name: "search",
+              }),
+            },
+          }),
+          projectRoot: linkedRoot,
+        });
+
+        expect(bundle.componentDefinitions).toMatchObject([
+          {
+            definitionPath: "../common",
+            dependencies: [],
+          },
+          {
+            definitionPath: "../search",
+            dependencies: ["../common"],
+          },
+        ]);
+        const searchDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../search",
+        );
+        const commonDefinition = bundle.componentDefinitions.find(
+          (definition) => definition.definitionPath === "../common",
+        );
+        expect(searchDefinition?.definition.source).toContain("_componentDeps");
+        expect(searchDefinition?.definition.source).not.toContain(
+          "symlink common config marker",
+        );
+        expect(commonDefinition?.definition.source).toContain(
+          "symlink common config marker",
+        );
       }).pipe(Effect.provide(BunServices.layer)),
     ));
 
@@ -7382,6 +8662,242 @@ describe("@alchemy/convex-runtime", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     ));
 
+  it("rejects invalid AppBundler component source metadata before generated file compilation", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const blankPackageApp = {
+          _tag: "App",
+          groups: {},
+          components: {
+            search: {
+              _tag: "ComponentUse",
+              id: "search",
+              source: { package: " " },
+            },
+          },
+        } as AppDeclaration;
+        const blankPackage = yield* AppBundler.bundleFromApp({
+          app: blankPackageApp,
+        }).pipe(Effect.flip);
+
+        expect(String(blankPackage)).toContain("components");
+        expect(String(blankPackage)).toContain("package");
+        expect(String(blankPackage)).toContain("blank");
+
+        const controlLocalApp = {
+          _tag: "App",
+          groups: {},
+          components: {
+            search: {
+              _tag: "ComponentUse",
+              id: "search",
+              source: { local: "components/search\u0000" },
+            },
+          },
+        } as AppDeclaration;
+        const controlLocal = yield* AppBundler.bundleFromApp({
+          app: controlLocalApp,
+        }).pipe(Effect.flip);
+
+        expect(String(controlLocal)).toContain("components");
+        expect(String(controlLocal)).toContain("local");
+        expect(String(controlLocal)).toContain("control");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("rejects invalid AppBundler component identity metadata before generated file compilation", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const root = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-invalid-component-metadata-",
+        });
+        const componentDir = path.join(root, "component");
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(componentDir, { recursive: true });
+        yield* fs.makeDirectory(nodeModules, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(componentDir, "convex.config.ts"),
+          "export default {};\n",
+        );
+        const appWithComponent = (
+          component: Record<string, unknown>,
+        ): AppDeclaration =>
+          ({
+            _tag: "App",
+            groups: {},
+            components: {
+              search: {
+                _tag: "ComponentUse",
+                source: { local: componentDir },
+                ...component,
+              },
+            },
+          }) as AppDeclaration;
+
+        const blankId = yield* AppBundler.bundleFromApp({
+          app: appWithComponent({ id: "   " }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(blankId)).toContain("components");
+        expect(String(blankId)).toContain("id");
+        expect(String(blankId)).toContain("Component identity");
+
+        const whitespaceId = yield* AppBundler.bundleFromApp({
+          app: appWithComponent({ id: "rag search" }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(whitespaceId)).toContain("components");
+        expect(String(whitespaceId)).toContain("id");
+        expect(String(whitespaceId)).toContain("whitespace");
+
+        const controlName = yield* AppBundler.bundleFromApp({
+          app: appWithComponent({ id: "search", name: "search\u0000" }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(controlName)).toContain("components");
+        expect(String(controlName)).toContain("name");
+        expect(String(controlName)).toContain("Component identity");
+
+        const whitespaceName = yield* AppBundler.bundleFromApp({
+          app: appWithComponent({ id: "search", name: "rag search" }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(whitespaceName)).toContain("components");
+        expect(String(whitespaceName)).toContain("name");
+        expect(String(whitespaceName)).toContain("whitespace");
+
+        const controlHttpPrefix = yield* AppBundler.bundleFromApp({
+          app: appWithComponent({ id: "search", httpPrefix: "/api\u0000" }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(controlHttpPrefix)).toContain("components");
+        expect(String(controlHttpPrefix)).toContain("httpPrefix");
+        expect(String(controlHttpPrefix)).toContain("control");
+
+        const blankTest = yield* AppBundler.bundleFromApp({
+          app: appWithComponent({ id: "search", test: "   " }),
+          projectRoot: root,
+        }).pipe(Effect.flip);
+
+        expect(String(blankTest)).toContain("components");
+        expect(String(blankTest)).toContain("test");
+        expect(String(blankTest)).toContain("test import strings");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("rejects invalid AppBundler group and function identity metadata before generated file compilation", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const invalidGroupApp = {
+          _tag: "App",
+          groups: {
+            "bad/name": {
+              _tag: "Group",
+              name: "bad/name",
+              functions: {},
+            },
+          },
+        } as AppDeclaration;
+        const invalidGroup = yield* AppBundler.bundleFromApp({
+          app: invalidGroupApp,
+        }).pipe(Effect.flip);
+
+        expect(String(invalidGroup)).toContain("groups");
+        expect(String(invalidGroup)).toContain("group names");
+        expect(String(invalidGroup)).not.toContain("defineApp({ module })");
+
+        const invalidFunctionApp = {
+          _tag: "App",
+          groups: {
+            notes: {
+              _tag: "Group",
+              name: "notes",
+              functions: {
+                "bad name": {
+                  _tag: "Function",
+                  kind: "query",
+                  handler: "badName",
+                },
+              },
+            },
+          },
+        } as AppDeclaration;
+        const invalidFunction = yield* AppBundler.bundleFromApp({
+          app: invalidFunctionApp,
+        }).pipe(Effect.flip);
+
+        expect(String(invalidFunction)).toContain("functions");
+        expect(String(invalidFunction)).toContain("function export names");
+        expect(String(invalidFunction)).not.toContain("defineApp({ module })");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
+  it("rejects invalid AppBundler app and group module strings before generated file compilation", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const blankAppModule = yield* AppBundler.bundleFromApp({
+          app: {
+            _tag: "App",
+            module: " ",
+            groups: {
+              notes: {
+                _tag: "Group",
+                name: "notes",
+                functions: {
+                  list: {
+                    _tag: "Function",
+                    kind: "query",
+                    handler: "list",
+                  },
+                },
+              },
+            },
+          } as AppDeclaration,
+        }).pipe(Effect.flip);
+
+        expect(String(blankAppModule)).toContain("module");
+        expect(String(blankAppModule)).toContain("module strings");
+        expect(String(blankAppModule)).not.toContain("Could not resolve");
+
+        const controlGroupModule = yield* AppBundler.bundleFromApp({
+          app: {
+            _tag: "App",
+            module: "/Users/demo/project/src/convex/app.ts",
+            groups: {
+              notes: {
+                _tag: "Group",
+                name: "notes",
+                module: "notes\u0000.ts",
+                functions: {
+                  list: {
+                    _tag: "Function",
+                    kind: "query",
+                    handler: "list",
+                  },
+                },
+              },
+            },
+          } as AppDeclaration,
+        }).pipe(Effect.flip);
+
+        expect(String(controlGroupModule)).toContain("module");
+        expect(String(controlGroupModule)).toContain("module strings");
+        expect(String(controlGroupModule)).not.toContain("Could not resolve");
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
+
   it("rejects empty runtime nodeVersion options before generated file compilation", () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -7987,6 +9503,77 @@ describe("@alchemy/convex-runtime", () => {
           deploymentUrl: deployment.deploymentUrl,
         });
         expect(reconciled.deployedModuleHashes).toBeUndefined();
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(AppDeployProvider()),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: () =>
+              Effect.sync(() => {
+                calls.push("start");
+                return {};
+              }),
+            evaluatePush: () =>
+              Effect.sync(() => {
+                calls.push("evaluate");
+                return {};
+              }),
+            waitForSchema: () =>
+              Effect.sync(() => {
+                calls.push("wait");
+                return { type: "complete" as const };
+              }),
+            finishPush: () =>
+              Effect.sync(() => {
+                calls.push("finish");
+                return {};
+              }),
+            reportPushCompleted: () =>
+              Effect.sync(() => {
+                calls.push("report");
+              }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("prunes stale dry-run AppDeploy deployed module hashes without deploy2 I/O", () => {
+    const calls: string[] = [];
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const bundle = yield* bundleFromApp(app);
+        const deployedModuleHashes = yield* Effect.all(
+          bundle.modules.map(runtimeModuleHash),
+        );
+        const provider = yield* AppDeploy.Provider;
+        const output = {
+          deploymentName: deployment.deploymentName,
+          deploymentUrl: deployment.deploymentUrl,
+          deployedBundleHash: bundle.bundleHash,
+          deployedAt: "2026-05-19T00:00:00.000Z",
+          dryRun: true,
+          appManifest: { components: [] },
+          indexDiff: { indexes: [] },
+          authDiff: { added: [], removed: [] },
+          componentDiffs: {},
+          deployedModuleHashes,
+        };
+
+        const reconciled = yield* provider.reconcile({
+          id: "Deploy",
+          instanceId: "i",
+          news: { deployment, bundle, dryRun: true },
+          olds: { deployment, bundle, dryRun: true },
+          output,
+          session,
+          bindings: [],
+        });
+
+        expect(reconciled).not.toBe(output);
+        expect(reconciled.deployedModuleHashes).toBeUndefined();
+        expect(reconciled.dryRun).toBe(true);
+        expect(reconciled.deployedAt).toBe("2026-05-19T00:00:00.000Z");
         expect(calls).toEqual([]);
       }).pipe(
         Effect.provide(AppDeployProvider()),
@@ -8892,6 +10479,97 @@ describe("@alchemy/convex-runtime", () => {
     );
   });
 
+  it("drops stale RuntimeDeployer state when deployment is disabled", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* RuntimeDeployer.deploy({
+          deployment,
+          source: { app, deploy: false, adminKey: deployment.adminKey },
+          previous: {
+            deploymentName: deployment.deploymentName,
+            deploymentUrl: `${deployment.deploymentUrl}/`,
+            bundleHash: "0".repeat(64),
+            deployedAt: "2026-01-02T03:04:05.000Z",
+            functionManifest: [{ path: "old:list", kind: "query" }],
+            deployerState: {
+              _tag: "RuntimeDeployer",
+              deploymentName: deployment.deploymentName,
+              deploymentUrl: `${deployment.deploymentUrl}/`,
+              deployedBundleHash: "0".repeat(64),
+              dryRun: false,
+              deployedModuleHashes: [
+                {
+                  path: "old.js",
+                  environment: "isolate",
+                  sha256: "0".repeat(64),
+                },
+              ],
+            },
+          },
+        });
+
+        expect(result.bundleHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(result.functionManifest).toEqual([
+          { path: "notes:list", kind: "query" },
+        ]);
+        expect(result.deployerState).toBeUndefined();
+        expect(result.deployedAt).not.toBe("2026-01-02T03:04:05.000Z");
+      }),
+    ));
+
+  it("keeps RuntimeDeployer dry-runs non-committal through deploy2", () => {
+    const calls: string[] = [];
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* RuntimeDeployer.deploy({
+          deployment,
+          source: { app, deploy: true, adminKey: deployment.adminKey },
+          dryRun: true,
+        });
+
+        expect(calls).toEqual([
+          "evaluate:calm-cat-123:true",
+          "wait:calm-cat-123:true",
+        ]);
+        expect(result.deployerState).toMatchObject({
+          _tag: "RuntimeDeployer",
+          deploymentName: deployment.deploymentName,
+          deploymentUrl: deployment.deploymentUrl,
+          deployedBundleHash: result.bundleHash,
+          dryRun: true,
+        });
+        expect(
+          (
+            result.deployerState as {
+              readonly deployedModuleHashes?: unknown;
+            }
+          ).deployedModuleHashes,
+        ).toBeUndefined();
+      }).pipe(
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: () => Effect.die("startPush should not run"),
+            evaluatePush: ({ deployment, dryRun }) =>
+              Effect.sync(() => {
+                calls.push(`evaluate:${deployment.deploymentName}:${dryRun}`);
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            waitForSchema: ({ deployment, dryRun }) =>
+              Effect.sync(() => {
+                calls.push(`wait:${deployment.deploymentName}:${dryRun}`);
+                return { type: "complete" as const };
+              }),
+            finishPush: () => Effect.die("finishPush should not run"),
+            reportPushCompleted: () => Effect.die("report should not run"),
+          }),
+        ),
+      ),
+    );
+  });
+
   it("passes runtime bundling options through RuntimeDeployer deploy2 requests", () => {
     let changedModulePaths: ReadonlyArray<string> = [];
     return Effect.runPromise(
@@ -8920,6 +10598,511 @@ describe("@alchemy/convex-runtime", () => {
                 changedModulePaths = bundle.modules.map(
                   (module) => module.path,
                 );
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            evaluatePush: () => Effect.die("evaluatePush should not run"),
+            waitForSchema: () => Effect.succeed({ type: "complete" as const }),
+            finishPush: () =>
+              Effect.succeed({
+                authDiff: { added: [], removed: [] },
+                componentDiffs: {},
+              }),
+            reportPushCompleted: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("passes project config and scoped hoisted package components through RuntimeDeployer deploy2 requests", () => {
+    let capturedBundle: RuntimeBundle | undefined;
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const workspace = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-deployer-scoped-hoisted-",
+        });
+        const projectRoot = path.join(workspace, "apps", "api");
+        const nodeModules = path.join(workspace, "node_modules");
+        const packageDir = path.join(nodeModules, "@acme", "search-component");
+        yield* fs.makeDirectory(path.join(projectRoot, "src", "convex"), {
+          recursive: true,
+        });
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.writeFileString(
+          path.join(projectRoot, "convex.json"),
+          JSON.stringify({ functions: "src/convex" }),
+        );
+        yield* fs.writeFileString(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "@acme/search-component",
+            version: "1.0.0",
+            exports: {
+              "./convex.config.js": "./src/convex.config.ts",
+            },
+          }),
+        );
+        yield* fs.makeDirectory(path.join(packageDir, "src"));
+        yield* fs.writeFileString(
+          path.join(packageDir, "src", "convex.config.ts"),
+          [
+            'import { defineApp } from "convex/server";',
+            'console.log("runtime deployer scoped hoisted marker");',
+            "export default defineApp();",
+            "",
+          ].join("\n"),
+        );
+
+        const result = yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: defineApp({
+              components: {
+                search: defineComponentUse("@acme/search-component", {
+                  source: { package: "@acme/search-component" },
+                  name: "search",
+                }),
+              },
+            }),
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot,
+          },
+        });
+
+        expect(capturedBundle?.functionsDirectory).toBe("src/convex");
+        expect(capturedBundle?.definitionDependencies).toEqual([
+          "../../../../node_modules/@acme/search-component/src",
+        ]);
+        expect(capturedBundle?.componentDefinitions).toMatchObject([
+          {
+            definitionPath:
+              "../../../../node_modules/@acme/search-component/src",
+            definition: { path: "convex.config.js" },
+            schema: null,
+            functions: [],
+          },
+        ]);
+        expect(
+          capturedBundle?.componentDefinitions[0]?.definition.source,
+        ).toContain("runtime deployer scoped hoisted marker");
+        expect(result.deployerState).toMatchObject({
+          _tag: "RuntimeDeployer",
+          deploymentName: deployment.deploymentName,
+          deploymentUrl: deployment.deploymentUrl,
+          deployedBundleHash: capturedBundle?.bundleHash,
+          dryRun: false,
+        });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: ({ bundle }) =>
+              Effect.sync(() => {
+                capturedBundle = bundle;
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            evaluatePush: () => Effect.die("evaluatePush should not run"),
+            waitForSchema: () => Effect.succeed({ type: "complete" as const }),
+            finishPush: () =>
+              Effect.succeed({
+                authDiff: { added: [], removed: [] },
+                componentDiffs: {},
+              }),
+            reportPushCompleted: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("reads projectRoot node config through RuntimeDeployer deploy2 requests", () => {
+    let capturedBundle: RuntimeBundle | undefined;
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const generated = yield* makeProjectRootExternalRuntimeApp(
+          "alchemy-convex-runtime-deployer-project-node-config-",
+        );
+        yield* fs.writeFileString(
+          path.join(generated.projectRoot, "convex.json"),
+          JSON.stringify({
+            node: {
+              externalPackages: ["yaml"],
+              nodeVersion: "22.11.0",
+            },
+          }),
+        );
+
+        const result = yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: generated.app,
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot: generated.projectRoot,
+          },
+        });
+
+        expect(capturedBundle?.nodeVersion).toBe("22.11.0");
+        expect(capturedBundle?.modules[0]?.environment).toBe("node");
+        expect(capturedBundle?.modules[0]?.source).toContain('from "yaml"');
+        expect(capturedBundle?.nodeDependencies).toEqual([
+          { name: "yaml", version: generated.yamlVersion },
+        ]);
+        expect(result.deployerState).toMatchObject({
+          _tag: "RuntimeDeployer",
+          deploymentName: deployment.deploymentName,
+          deploymentUrl: deployment.deploymentUrl,
+          deployedBundleHash: capturedBundle?.bundleHash,
+          dryRun: false,
+        });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: ({ bundle }) =>
+              Effect.sync(() => {
+                capturedBundle = bundle;
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            evaluatePush: () => Effect.die("evaluatePush should not run"),
+            waitForSchema: () => Effect.succeed({ type: "complete" as const }),
+            finishPush: () =>
+              Effect.succeed({
+                authDiff: { added: [], removed: [] },
+                componentDiffs: {},
+              }),
+            reportPushCompleted: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("infers RuntimeDeployer external dependency metadata from hoisted node_modules", () => {
+    let capturedBundle: RuntimeBundle | undefined;
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* Effect.sync(() => process.cwd());
+        const workspace = yield* fs.makeTempDirectory({
+          prefix: "alchemy-convex-runtime-deployer-hoisted-external-",
+        });
+        const projectRoot = path.join(workspace, "apps", "api");
+        const appModule = path.join(projectRoot, "app.ts");
+        const jobsModule = path.join(projectRoot, "jobs.ts");
+        const nodeModules = path.join(workspace, "node_modules");
+        const packageRoot = path.join(nodeModules, "hoisted-lib");
+        yield* fs.makeDirectory(projectRoot, { recursive: true });
+        yield* fs.makeDirectory(path.join(nodeModules, "@alchemy"), {
+          recursive: true,
+        });
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/convex"),
+          path.join(nodeModules, "convex"),
+        );
+        yield* fs.symlink(
+          path.join(cwd, "packages/convex-runtime/node_modules/effect"),
+          path.join(nodeModules, "effect"),
+        );
+        yield* fs.symlink(
+          path.join(
+            cwd,
+            "packages/convex-runtime/node_modules/@alchemy/convex",
+          ),
+          path.join(nodeModules, "@alchemy/convex"),
+        );
+        yield* fs.makeDirectory(packageRoot, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(packageRoot, "package.json"),
+          JSON.stringify({ name: "hoisted-lib", version: "1.2.3" }),
+        );
+        yield* fs.writeFileString(
+          jobsModule,
+          [
+            '"use node";',
+            'import value from "hoisted-lib";',
+            "export const run = () => value;",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          appModule,
+          [
+            "export default {",
+            "  groups: {",
+            "    jobs: {",
+            '      name: "jobs",',
+            "      functions: {",
+            '        run: { kind: "action", handler: () => null },',
+            "      },",
+            "    },",
+            "  },",
+            "};",
+            "",
+          ].join("\n"),
+        );
+
+        yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: defineApp({
+              module: appModule,
+              groups: {
+                jobs: defineGroup(
+                  "jobs",
+                  {
+                    run: action({ handler: "run" }),
+                  },
+                  { module: jobsModule },
+                ),
+              },
+            }),
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot,
+            externalPackages: ["hoisted-lib"],
+          },
+        });
+
+        expect(capturedBundle?.modules[0]?.environment).toBe("node");
+        expect(capturedBundle?.nodeDependencies).toEqual([
+          { name: "hoisted-lib", version: "1.2.3" },
+        ]);
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: ({ bundle }) =>
+              Effect.sync(() => {
+                capturedBundle = bundle;
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            evaluatePush: () => Effect.die("evaluatePush should not run"),
+            waitForSchema: () => Effect.succeed({ type: "complete" as const }),
+            finishPush: () =>
+              Effect.succeed({
+                authDiff: { added: [], removed: [] },
+                componentDiffs: {},
+              }),
+            reportPushCompleted: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("reads and overrides projectRoot bundler config through RuntimeDeployer deploy2 requests", () => {
+    const capturedBundles: RuntimeBundle[] = [];
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const generated = yield* makeProjectRootExternalRuntimeApp(
+          "alchemy-convex-runtime-deployer-bundler-config-",
+        );
+        yield* fs.writeFileString(
+          path.join(generated.projectRoot, "convex.json"),
+          JSON.stringify({
+            bundler: {
+              includeSourcesContent: true,
+            },
+          }),
+        );
+
+        yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: generated.app,
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot: generated.projectRoot,
+          },
+        });
+        yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: generated.app,
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot: generated.projectRoot,
+            includeSourcesContent: false,
+          },
+        });
+
+        const configuredSourceMap = yield* Effect.sync(
+          () =>
+            JSON.parse(capturedBundles[0]!.modules[0]!.sourceMap!) as unknown,
+        );
+        const explicitSourceMap = yield* Effect.sync(
+          () =>
+            JSON.parse(capturedBundles[1]!.modules[0]!.sourceMap!) as unknown,
+        );
+
+        expect(configuredSourceMap).toHaveProperty("sourcesContent");
+        expect(explicitSourceMap).not.toHaveProperty("sourcesContent");
+        expect(capturedBundles[0]?.bundleHash).not.toBe(
+          capturedBundles[1]?.bundleHash,
+        );
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: ({ bundle }) =>
+              Effect.sync(() => {
+                capturedBundles.push(bundle);
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            evaluatePush: () => Effect.die("evaluatePush should not run"),
+            waitForSchema: () => Effect.succeed({ type: "complete" as const }),
+            finishPush: () =>
+              Effect.succeed({
+                authDiff: { added: [], removed: [] },
+                componentDiffs: {},
+              }),
+            reportPushCompleted: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("rejects malformed RuntimeDeployer project config before deploy2 side effects", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const generated = yield* makeProjectRootExternalRuntimeApp(
+          "alchemy-convex-runtime-deployer-bad-project-config-",
+        );
+        const deploy2Calls: string[] = [];
+        yield* fs.writeFileString(
+          path.join(generated.projectRoot, "convex.json"),
+          JSON.stringify({
+            bundler: {
+              includeSourcesContent: "yes",
+            },
+          }),
+        );
+
+        const failure = yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: generated.app,
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot: generated.projectRoot,
+          },
+        }).pipe(Effect.flip);
+        const stderr = (failure as { readonly stderr?: string }).stderr;
+
+        expect(stderr).toContain("includeSourcesContent");
+        expect(deploy2Calls).toEqual([]);
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: () =>
+              Effect.sync(() => {
+                deploy2Calls.push("start");
+                return {
+                  app: { components: [] },
+                  schemaChange: { indexDiffs: { "": { indexes: [] } } },
+                };
+              }),
+            evaluatePush: () =>
+              Effect.sync(() => {
+                deploy2Calls.push("evaluate");
+                return {};
+              }),
+            waitForSchema: () =>
+              Effect.sync(() => {
+                deploy2Calls.push("wait");
+                return { type: "complete" as const };
+              }),
+            finishPush: () =>
+              Effect.sync(() => {
+                deploy2Calls.push("finish");
+                return {
+                  authDiff: { added: [], removed: [] },
+                  componentDiffs: {},
+                };
+              }),
+            reportPushCompleted: () =>
+              Effect.sync(() => {
+                deploy2Calls.push("report");
+              }),
+          }),
+        ),
+      ),
+    ));
+
+  it("lets explicit RuntimeDeployer node options override projectRoot convex.json", () => {
+    let capturedBundle: RuntimeBundle | undefined;
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const generated = yield* makeProjectRootExternalRuntimeApp(
+          "alchemy-convex-runtime-deployer-node-override-",
+        );
+        yield* fs.writeFileString(
+          path.join(generated.projectRoot, "convex.json"),
+          JSON.stringify({
+            node: {
+              externalPackages: ["yaml"],
+              nodeVersion: "22.11.0",
+            },
+          }),
+        );
+
+        yield* RuntimeDeployer.deploy({
+          deployment,
+          source: {
+            app: generated.app,
+            deploy: true,
+            adminKey: deployment.adminKey,
+            projectRoot: generated.projectRoot,
+            externalPackages: [],
+            nodeVersion: "20.19.0",
+          },
+        });
+
+        expect(capturedBundle?.nodeVersion).toBe("20.19.0");
+        expect(capturedBundle?.nodeDependencies).toEqual([]);
+        expect(capturedBundle?.modules[0]?.source).not.toContain('from "yaml"');
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: ({ bundle }) =>
+              Effect.sync(() => {
+                capturedBundle = bundle;
                 return {
                   app: { components: [] },
                   schemaChange: { indexDiffs: { "": { indexes: [] } } },
@@ -9417,6 +11600,81 @@ describe("@alchemy/convex-runtime", () => {
         });
 
         expect(output.deployedAt).toBe("2026-05-20T00:00:00.000Z");
+        expect(output.bundleHash).toBe(bundle.bundleHash);
+        expect(output.deploymentUrl).toBe(deployment.deploymentUrl);
+        expect(
+          (
+            output as {
+              readonly deployerState?: {
+                readonly deployedModuleHashes?: unknown;
+              };
+            }
+          ).deployerState,
+        ).toEqual({
+          _tag: "RuntimeDeployer",
+          deploymentName: deployment.deploymentName,
+          deploymentUrl: deployment.deploymentUrl,
+          dryRun: true,
+          deployedBundleHash: bundle.bundleHash,
+        });
+      }).pipe(
+        Effect.provide(AppProvider()),
+        Effect.provide(
+          Layer.succeed(DeployApi, {
+            startPush: () => Effect.die("startPush should not run"),
+            evaluatePush: () => Effect.die("evaluatePush should not run"),
+            waitForSchema: () => Effect.die("waitForSchema should not run"),
+            finishPush: () => Effect.die("finishPush should not run"),
+            reportPushCompleted: () => Effect.die("report should not run"),
+          }),
+        ),
+      ),
+    ));
+
+  it("prunes stale high-level dry-run RuntimeApp module hashes without deploy2 I/O", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const bundle = yield* bundleFromApp(app);
+        const staleModuleHashes = yield* Effect.all(
+          bundle.modules.map(runtimeModuleHash),
+        );
+        const provider = yield* CoreApp.Provider;
+        const previous = {
+          deploymentName: deployment.deploymentName,
+          deploymentUrl: `${deployment.deploymentUrl}/`,
+          bundleHash: bundle.bundleHash,
+          deployedAt: "2026-05-19T00:00:00.000Z",
+          functionManifest: bundle.functionManifest,
+          deployerState: {
+            _tag: "RuntimeDeployer",
+            deploymentName: deployment.deploymentName,
+            deploymentUrl: `${deployment.deploymentUrl}/`,
+            dryRun: true,
+            deployedBundleHash: bundle.bundleHash,
+            deployedModuleHashes: staleModuleHashes,
+          },
+        };
+
+        const output = yield* provider.reconcile({
+          id: "Backend",
+          instanceId: "i",
+          news: {
+            deployment,
+            source: {
+              app,
+              deploy: true,
+              adminKey: deployment.adminKey,
+            },
+            deployer: RuntimeDeployer,
+            dryRun: true,
+          },
+          olds: undefined,
+          output: previous,
+          session,
+          bindings: [],
+        });
+
+        expect(output.deployedAt).toBe("2026-05-19T00:00:00.000Z");
         expect(output.bundleHash).toBe(bundle.bundleHash);
         expect(output.deploymentUrl).toBe(deployment.deploymentUrl);
         expect(

@@ -208,6 +208,39 @@ describe("Convex Effect Schema contracts", () => {
         { source: { package: "@convex-dev/rag" }, httpPrefix: "rag" },
       ],
       [
+        Convex.ComponentPropsSchema,
+        { source: { package: "   " }, name: "blankPackage" },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        { source: { local: "components/search\u0000" } },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        {
+          source: {
+            package: "@convex-dev/rag",
+            configExport: "",
+          },
+        },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        { source: { package: "@convex-dev/rag" }, name: "   " },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        { source: { package: "@convex-dev/rag" }, name: "rag search" },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        { source: { package: "@convex-dev/rag" }, httpPrefix: "/rag\u0000" },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        { source: { package: "@convex-dev/rag" }, test: "" },
+      ],
+      [
         Convex.CanonicalUrlPropsSchema,
         { deployment, requestDestination: "api", url: null },
       ],

@@ -127,6 +127,143 @@ export const DeploymentReferenceSchema = Schema.Union([
   }),
 ]);
 
+const hasControlCharacter = (value: string) =>
+  /[\u0000-\u001F\u007F]/.test(value);
+
+const componentImportString = (message: string) =>
+  Schema.String.pipe(
+    Schema.refine(
+      (value): value is string =>
+        value.trim().length > 0 &&
+        value === value.trim() &&
+        !/\s/.test(value) &&
+        !hasControlCharacter(value),
+      { message },
+    ),
+  );
+
+const ComponentIdentityStringSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 &&
+      value === value.trim() &&
+      !/\s/.test(value) &&
+      !hasControlCharacter(value),
+    {
+      message:
+        "Component identity strings must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+
+const ComponentPathStringSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 && !hasControlCharacter(value),
+    {
+      message:
+        "Component source path strings must not be blank or contain control characters.",
+    },
+  ),
+);
+
+const ComponentImportStringSchema = componentImportString(
+  "Component package and config import strings must not be blank or contain whitespace or control characters.",
+);
+
+const ComponentTestImportStringSchema = componentImportString(
+  "Component test import strings must not be blank or contain whitespace or control characters.",
+);
+
+const ComponentHttpPrefixSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is `/${string}` =>
+      value.startsWith("/") &&
+      value.trim().length > 0 &&
+      value === value.trim() &&
+      !/\s/.test(value) &&
+      !hasControlCharacter(value),
+    {
+      message:
+        "Component httpPrefix must start with / and must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+
+export const DeploymentIdentityNameSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 &&
+      !/\s/.test(value) &&
+      !/[\u0000-\u001F\u007F]/.test(value),
+    {
+      message:
+        "deploymentName must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+
+export const DeploymentOriginUrlSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string => {
+      try {
+        if (value !== value.trim() || /[\u0000-\u001F\u007F]/.test(value)) {
+          return false;
+        }
+        const url = new URL(value);
+        return (
+          (url.protocol === "http:" || url.protocol === "https:") &&
+          url.username === "" &&
+          url.password === "" &&
+          /^\/+$/.test(url.pathname) &&
+          url.search === "" &&
+          url.hash === ""
+        );
+      } catch {
+        return false;
+      }
+    },
+    {
+      message:
+        "deploymentUrl must be a valid HTTP(S) origin URL without credentials, whitespace, path, query, or hash components.",
+    },
+  ),
+);
+
+export const DeploymentIdentityReferenceSchema = Schema.Struct({
+  deploymentName: DeploymentIdentityNameSchema,
+  deploymentUrl: DeploymentOriginUrlSchema,
+});
+
+export const normalizeDeploymentUrl = (url: string) => url.replace(/\/+$/, "");
+
+export const BundleSourcePathSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 && !/[\u0000-\u001F\u007F]/.test(value),
+    {
+      message: "source must not be blank or contain control characters.",
+    },
+  ),
+);
+
+export const decodeDeploymentIdentity = (
+  resourceType: string,
+  value: unknown,
+) =>
+  Schema.decodeUnknownEffect(DeploymentIdentityReferenceSchema)(value).pipe(
+    Effect.map((deployment) => ({
+      ...deployment,
+      deploymentUrl: normalizeDeploymentUrl(deployment.deploymentUrl),
+    })),
+    Effect.mapError(
+      (cause) =>
+        new Error(
+          `${resourceType} deployment must include deploymentName and deploymentUrl as a valid deployment reference. ${String(cause)}`,
+        ),
+    ),
+  );
+
 export const TeamPropsSchema = Schema.Struct({
   id: Schema.optionalKey(Schema.String),
   slug: Schema.optionalKey(Schema.String),
@@ -158,14 +295,14 @@ export const DeploymentPropsSchema = Schema.Struct({
 });
 
 export const ComponentPackageSourceSchema = Schema.Struct({
-  package: Schema.String,
-  version: Schema.optionalKey(Schema.String),
-  configExport: Schema.optionalKey(Schema.String),
+  package: ComponentImportStringSchema,
+  version: Schema.optionalKey(ComponentImportStringSchema),
+  configExport: Schema.optionalKey(ComponentImportStringSchema),
 });
 
 export const ComponentLocalSourceSchema = Schema.Struct({
-  local: Schema.String,
-  configPath: Schema.optionalKey(Schema.String),
+  local: ComponentPathStringSchema,
+  configPath: Schema.optionalKey(ComponentPathStringSchema),
 });
 
 export const ComponentSourceSchema = Schema.Union([
@@ -175,16 +312,16 @@ export const ComponentSourceSchema = Schema.Union([
 
 export const ComponentPropsSchema = Schema.Struct({
   source: ComponentSourceSchema,
-  name: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(ComponentIdentityStringSchema),
   env: Schema.optionalKey(Schema.Record(Schema.String, SecretValueSchema)),
-  httpPrefix: Schema.optionalKey(Schema.TemplateLiteral(["/", Schema.String])),
+  httpPrefix: Schema.optionalKey(ComponentHttpPrefixSchema),
   options: Schema.optionalKey(JsonRecordSchema),
-  test: Schema.optionalKey(Schema.String),
+  test: Schema.optionalKey(ComponentTestImportStringSchema),
 });
 
 export const BundlePropsSchema = Schema.Struct({
   deployment: DeploymentReferenceSchema,
-  source: Schema.String,
+  source: BundleSourcePathSchema,
   deployKey: Schema.optionalKey(SecretValueSchema),
   dryRun: Schema.optionalKey(Schema.Boolean),
 });

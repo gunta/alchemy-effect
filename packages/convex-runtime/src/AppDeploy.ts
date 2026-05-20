@@ -214,6 +214,16 @@ export const AppDeployProvider = () =>
                 ),
               };
             }
+            if (
+              dryRun &&
+              currentOutput.decoded.deployedModuleHashes !== undefined
+            ) {
+              const {
+                deployedModuleHashes: _deployedModuleHashes,
+                ...withoutDeployedModuleHashes
+              } = canonicalOutput;
+              return withoutDeployedModuleHashes;
+            }
             return canonicalOutput;
           }
 

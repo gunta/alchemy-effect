@@ -44,11 +44,17 @@ export const ConvexCliLive = Layer.effect(
         Effect.gen(function* () {
           const args = ["convex", "deploy"];
           if (input.dryRun) args.push("--dry-run");
-          if (input.deploymentUrl) args.push("--url", input.deploymentUrl);
-          const env =
+          const deployKey =
             input.deployKey === undefined
               ? undefined
-              : { CONVEX_DEPLOY_KEY: Redacted.value(input.deployKey) };
+              : Redacted.value(input.deployKey);
+          if (input.deploymentUrl && deployKey) {
+            args.push("--url", input.deploymentUrl, "--admin-key", deployKey);
+          }
+          const env =
+            deployKey === undefined || input.deploymentUrl
+              ? undefined
+              : { CONVEX_DEPLOY_KEY: deployKey };
           const mergedEnv = yield* Effect.sync(() =>
             env ? { ...process.env, ...env } : process.env,
           );
