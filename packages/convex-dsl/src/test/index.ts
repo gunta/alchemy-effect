@@ -117,13 +117,27 @@ const unavailableRun = (name: string) =>
     }),
   );
 
+/**
+ * Build an Effect-backed test backend from an Alchemy Convex app or from an
+ * already compiled generated file map.
+ *
+ * `layer(app)` is the normal app-level test entrypoint. `fromFiles(files)` is
+ * useful for deployer tests and generated-file fixtures that need to validate
+ * manifest metadata without recompiling the app declaration.
+ */
 export const TestConvex = {
-  layer: (
-    app: AppDeclaration,
+  /**
+   * Creates a metadata-first virtual backend from generated Convex files.
+   *
+   * Without an injected `run` implementation, calls fail with
+   * `TestConvexRunnerUnavailable` so tests do not accidentally treat metadata
+   * checks as real handler execution.
+   */
+  fromFiles: (
+    files: FileMap,
     options: TestConvexLayerOptions = {},
   ): Effect.Effect<TestConvexBackend, TestConvexManifestInvalid> =>
     Effect.gen(function* () {
-      const files = compileApp(app);
       const components =
         options.components ?? (yield* helperMetadataFromManifest(files));
       const metadata: TestConvexMetadata = {
@@ -135,4 +149,12 @@ export const TestConvex = {
         run: options.run ?? unavailableRun,
       };
     }),
+  /**
+   * Compiles an Alchemy Convex app declaration and creates the virtual backend.
+   */
+  layer: (
+    app: AppDeclaration,
+    options: TestConvexLayerOptions = {},
+  ): Effect.Effect<TestConvexBackend, TestConvexManifestInvalid> =>
+    TestConvex.fromFiles(compileApp(app), options),
 };

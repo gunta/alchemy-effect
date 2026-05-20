@@ -4,10 +4,15 @@ import * as Match from "effect/Match";
 import * as Redacted from "effect/Redacted";
 import {
   AuthError,
+  type AuthProviderImpl,
   AuthProviderLayer,
   type ConfigureContext,
 } from "../Auth/AuthProvider.ts";
-import { CredentialsStore, displayRedacted } from "../Auth/Credentials.ts";
+import {
+  CredentialsStore,
+  type CredentialsStoreService,
+  displayRedacted,
+} from "../Auth/Credentials.ts";
 import { getEnv, getEnvRedacted, retryOnce } from "../Auth/Env.ts";
 import * as Clank from "../Util/Clank.ts";
 import {
@@ -67,6 +72,35 @@ const options: Array<{
 ];
 
 const storedKey = "convex-stored";
+
+type ConvexAuthPromptInput = {
+  readonly message: string;
+  readonly validate?: (value: string) => string | undefined;
+};
+
+export interface ConvexAuthPrompts {
+  readonly select: (opts: {
+    readonly message: string;
+    readonly options: typeof options;
+  }) => Effect.Effect<
+    Exclude<ConvexAuthConfig["method"], "env">,
+    Clank.PromptCancelled
+  >;
+  readonly password: (
+    opts: ConvexAuthPromptInput,
+  ) => Effect.Effect<string, Clank.PromptCancelled>;
+  readonly text: (
+    opts: ConvexAuthPromptInput,
+  ) => Effect.Effect<string, Clank.PromptCancelled>;
+  readonly success: (message: string) => Effect.Effect<void>;
+}
+
+const defaultPrompts: ConvexAuthPrompts = {
+  select: Clank.select,
+  password: Clank.password,
+  text: Clank.text,
+  success: Clank.success,
+};
 
 const readEnvCredentials = Effect.fnUntraced(function* () {
   const selfHostedUrl = yield* getEnv("CONVEX_SELF_HOSTED_URL");
@@ -157,6 +191,208 @@ const fromStored = (
     Match.exhaustive,
   );
 
+export const makeConvexAuthProvider = (
+  store: CredentialsStoreService,
+  prompts: ConvexAuthPrompts = defaultPrompts,
+): AuthProviderImpl<ConvexAuthConfig, ConvexResolvedCredentials> => {
+  const configureInteractive = (profileName: string) =>
+    prompts
+      .select({
+        message: "Convex authentication method",
+        options,
+      })
+      .pipe(
+        Effect.flatMap((method) =>
+          Match.value(method).pipe(
+            Match.when("team-token", () =>
+              prompts
+                .password({
+                  message: "Convex Team Token",
+                  validate: (v) => (v.length === 0 ? "Required" : undefined),
+                })
+                .pipe(
+                  retryOnce,
+                  Effect.tap((token) =>
+                    store.write<ConvexStoredCredentials>(
+                      profileName,
+                      storedKey,
+                      {
+                        type: "team-token",
+                        token,
+                      },
+                    ),
+                  ),
+                  Effect.as({ method: "team-token" as const }),
+                ),
+            ),
+            Match.when("oauth", () =>
+              prompts
+                .password({
+                  message: "Convex OAuth Token",
+                  validate: (v) => (v.length === 0 ? "Required" : undefined),
+                })
+                .pipe(
+                  retryOnce,
+                  Effect.tap((token) =>
+                    store.write<ConvexStoredCredentials>(
+                      profileName,
+                      storedKey,
+                      {
+                        type: "oauth",
+                        token,
+                      },
+                    ),
+                  ),
+                  Effect.as({ method: "oauth" as const }),
+                ),
+            ),
+            Match.when("deploy-key", () =>
+              prompts
+                .password({
+                  message: "Convex Deploy Key",
+                  validate: (v) => (v.length === 0 ? "Required" : undefined),
+                })
+                .pipe(
+                  retryOnce,
+                  Effect.tap((deployKey) =>
+                    store.write<ConvexStoredCredentials>(
+                      profileName,
+                      storedKey,
+                      {
+                        type: "deploy-key",
+                        deployKey,
+                      },
+                    ),
+                  ),
+                  Effect.as({ method: "deploy-key" as const }),
+                ),
+            ),
+            Match.when("self-hosted", () =>
+              Effect.gen(function* () {
+                const url = yield* prompts
+                  .text({
+                    message: "Convex self-hosted URL",
+                    validate: (v) => (v.length === 0 ? "Required" : undefined),
+                  })
+                  .pipe(retryOnce);
+                const adminKey = yield* prompts
+                  .password({
+                    message: "Convex self-hosted admin key",
+                    validate: (v) => (v.length === 0 ? "Required" : undefined),
+                  })
+                  .pipe(retryOnce);
+                yield* store.write<ConvexStoredCredentials>(
+                  profileName,
+                  storedKey,
+                  { type: "self-hosted", url, adminKey },
+                );
+                return { method: "self-hosted" as const };
+              }),
+            ),
+            Match.exhaustive,
+          ),
+        ),
+        Effect.tap(() => prompts.success("Convex: credentials saved.")),
+        Effect.mapError((e) =>
+          e instanceof AuthError
+            ? e
+            : new AuthError({
+                message: "failed to configure Convex credentials",
+                cause: e,
+              }),
+        ),
+      );
+
+  const configure = (profileName: string, ctx: ConfigureContext) =>
+    ctx.ci
+      ? Effect.succeed({ method: "env" as const })
+      : configureInteractive(profileName);
+
+  const readStored = (
+    profileName: string,
+  ): Effect.Effect<ConvexResolvedCredentials, AuthError> =>
+    store.read<ConvexStoredCredentials>(profileName, storedKey).pipe(
+      Effect.flatMap((credentials) =>
+        credentials == null
+          ? Effect.fail(
+              new AuthError({
+                message:
+                  "Convex stored credentials not found. Run: alchemy login --configure",
+              }),
+            )
+          : Effect.succeed(fromStored(credentials)),
+      ),
+    );
+
+  const read = (
+    profileName: string,
+    config: ConvexAuthConfig,
+  ): Effect.Effect<ConvexResolvedCredentials, AuthError> =>
+    Match.value(config).pipe(
+      Match.when({ method: "env" }, () => readEnvCredentials()),
+      Match.when({ method: "team-token" }, () => readStored(profileName)),
+      Match.when({ method: "oauth" }, () => readStored(profileName)),
+      Match.when({ method: "deploy-key" }, () => readStored(profileName)),
+      Match.when({ method: "self-hosted" }, () => readStored(profileName)),
+      Match.exhaustive,
+    );
+
+  const logout = (profileName: string, config: ConvexAuthConfig) =>
+    config.method === "env"
+      ? Effect.void
+      : store
+          .delete(profileName, storedKey)
+          .pipe(Effect.andThen(prompts.success("Convex: credentials removed")));
+
+  const login = (profileName: string, config: ConvexAuthConfig) =>
+    config.method === "env"
+      ? readEnvCredentials().pipe(Effect.asVoid)
+      : readStored(profileName).pipe(
+          Effect.catch(() => configureInteractive(profileName)),
+          Effect.asVoid,
+        );
+
+  const prettyPrint = (profileName: string, config: ConvexAuthConfig) =>
+    read(profileName, config).pipe(
+      Effect.flatMap((credentials) =>
+        Match.value(credentials).pipe(
+          Match.when({ mode: "team-token" }, (c) =>
+            Console.log(
+              `  teamToken: ${displayRedacted(c.token, 8)} (${c.source.type})`,
+            ),
+          ),
+          Match.when({ mode: "oauth" }, (c) =>
+            Console.log(
+              `  oauthToken: ${displayRedacted(c.token, 8)} (${c.source.type})`,
+            ),
+          ),
+          Match.when({ mode: "deploy-key" }, (c) =>
+            Console.log(
+              `  deployKey: ${displayRedacted(c.deployKey, 8)} (${c.source.type})`,
+            ),
+          ),
+          Match.when({ mode: "self-hosted" }, (c) =>
+            Console.log(
+              `  selfHosted: ${c.managementApiUrl} (${c.source.type})`,
+            ),
+          ),
+          Match.exhaustive,
+        ),
+      ),
+      Effect.catch((e) =>
+        Console.error(`  Failed to retrieve credentials: ${e}`),
+      ),
+    );
+
+  return {
+    configure,
+    login,
+    logout,
+    prettyPrint,
+    read,
+  };
+};
+
 /**
  * Layer that registers the Convex {@link AuthProvider}. CI defaults to env
  * credentials; interactive configuration stores one of the supported Convex
@@ -169,179 +405,7 @@ export const ConvexAuth = AuthProviderLayer<
   CONVEX_AUTH_PROVIDER_NAME,
   Effect.gen(function* () {
     const store = yield* CredentialsStore;
-
-    const configureInteractive = (profileName: string) =>
-      Clank.select({
-        message: "Convex authentication method",
-        options,
-      }).pipe(
-        Effect.flatMap((method) =>
-          Match.value(method).pipe(
-            Match.when("team-token", () =>
-              Clank.password({
-                message: "Convex Team Token",
-                validate: (v) => (v.length === 0 ? "Required" : undefined),
-              }).pipe(
-                retryOnce,
-                Effect.tap((token) =>
-                  store.write<ConvexStoredCredentials>(profileName, storedKey, {
-                    type: "team-token",
-                    token,
-                  }),
-                ),
-                Effect.as({ method: "team-token" as const }),
-              ),
-            ),
-            Match.when("oauth", () =>
-              Clank.password({
-                message: "Convex OAuth Token",
-                validate: (v) => (v.length === 0 ? "Required" : undefined),
-              }).pipe(
-                retryOnce,
-                Effect.tap((token) =>
-                  store.write<ConvexStoredCredentials>(profileName, storedKey, {
-                    type: "oauth",
-                    token,
-                  }),
-                ),
-                Effect.as({ method: "oauth" as const }),
-              ),
-            ),
-            Match.when("deploy-key", () =>
-              Clank.password({
-                message: "Convex Deploy Key",
-                validate: (v) => (v.length === 0 ? "Required" : undefined),
-              }).pipe(
-                retryOnce,
-                Effect.tap((deployKey) =>
-                  store.write<ConvexStoredCredentials>(profileName, storedKey, {
-                    type: "deploy-key",
-                    deployKey,
-                  }),
-                ),
-                Effect.as({ method: "deploy-key" as const }),
-              ),
-            ),
-            Match.when("self-hosted", () =>
-              Effect.gen(function* () {
-                const url = yield* Clank.text({
-                  message: "Convex self-hosted URL",
-                  validate: (v) => (v.length === 0 ? "Required" : undefined),
-                }).pipe(retryOnce);
-                const adminKey = yield* Clank.password({
-                  message: "Convex self-hosted admin key",
-                  validate: (v) => (v.length === 0 ? "Required" : undefined),
-                }).pipe(retryOnce);
-                yield* store.write<ConvexStoredCredentials>(
-                  profileName,
-                  storedKey,
-                  { type: "self-hosted", url, adminKey },
-                );
-                return { method: "self-hosted" as const };
-              }),
-            ),
-            Match.exhaustive,
-          ),
-        ),
-        Effect.tap(() => Clank.success("Convex: credentials saved.")),
-        Effect.mapError((e) =>
-          e instanceof AuthError
-            ? e
-            : new AuthError({
-                message: "failed to configure Convex credentials",
-                cause: e,
-              }),
-        ),
-      );
-
-    const configure = (profileName: string, ctx: ConfigureContext) =>
-      ctx.ci
-        ? Effect.succeed({ method: "env" as const })
-        : configureInteractive(profileName);
-
-    const readStored = (
-      profileName: string,
-    ): Effect.Effect<ConvexResolvedCredentials, AuthError> =>
-      store.read<ConvexStoredCredentials>(profileName, storedKey).pipe(
-        Effect.flatMap((credentials) =>
-          credentials == null
-            ? Effect.fail(
-                new AuthError({
-                  message:
-                    "Convex stored credentials not found. Run: alchemy login --configure",
-                }),
-              )
-            : Effect.succeed(fromStored(credentials)),
-        ),
-      );
-
-    const read = (
-      profileName: string,
-      config: ConvexAuthConfig,
-    ): Effect.Effect<ConvexResolvedCredentials, AuthError> =>
-      Match.value(config).pipe(
-        Match.when({ method: "env" }, () => readEnvCredentials()),
-        Match.when({ method: "team-token" }, () => readStored(profileName)),
-        Match.when({ method: "oauth" }, () => readStored(profileName)),
-        Match.when({ method: "deploy-key" }, () => readStored(profileName)),
-        Match.when({ method: "self-hosted" }, () => readStored(profileName)),
-        Match.exhaustive,
-      );
-
-    const logout = (profileName: string, config: ConvexAuthConfig) =>
-      config.method === "env"
-        ? Effect.void
-        : store
-            .delete(profileName, storedKey)
-            .pipe(Effect.andThen(Clank.success("Convex: credentials removed")));
-
-    const login = (profileName: string, config: ConvexAuthConfig) =>
-      config.method === "env"
-        ? readEnvCredentials().pipe(Effect.asVoid)
-        : readStored(profileName).pipe(
-            Effect.catch(() => configureInteractive(profileName)),
-            Effect.asVoid,
-          );
-
-    const prettyPrint = (profileName: string, config: ConvexAuthConfig) =>
-      read(profileName, config).pipe(
-        Effect.flatMap((credentials) =>
-          Match.value(credentials).pipe(
-            Match.when({ mode: "team-token" }, (c) =>
-              Console.log(
-                `  teamToken: ${displayRedacted(c.token, 8)} (${c.source.type})`,
-              ),
-            ),
-            Match.when({ mode: "oauth" }, (c) =>
-              Console.log(
-                `  oauthToken: ${displayRedacted(c.token, 8)} (${c.source.type})`,
-              ),
-            ),
-            Match.when({ mode: "deploy-key" }, (c) =>
-              Console.log(
-                `  deployKey: ${displayRedacted(c.deployKey, 8)} (${c.source.type})`,
-              ),
-            ),
-            Match.when({ mode: "self-hosted" }, (c) =>
-              Console.log(
-                `  selfHosted: ${c.managementApiUrl} (${c.source.type})`,
-              ),
-            ),
-            Match.exhaustive,
-          ),
-        ),
-        Effect.catch((e) =>
-          Console.error(`  Failed to retrieve credentials: ${e}`),
-        ),
-      );
-
-    return {
-      configure,
-      login,
-      logout,
-      prettyPrint,
-      read,
-    };
+    return makeConvexAuthProvider(store);
   }),
 );
 

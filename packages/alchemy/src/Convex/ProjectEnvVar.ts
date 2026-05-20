@@ -108,6 +108,7 @@ export const ProjectEnvVarProvider = () =>
           delete: Effect.fn("Convex.ProjectEnvVar.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             yield* api.updateDefaultEnvironmentVariables({
               projectId: output.projectId,
               changes: [

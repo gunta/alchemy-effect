@@ -149,6 +149,7 @@ export const CanonicalUrlProvider = () =>
           delete: Effect.fn("Convex.CanonicalUrl.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             yield* admin.updateCanonicalUrl({
               deploymentUrl: output.deploymentUrl,
               requestDestination: output.requestDestination,

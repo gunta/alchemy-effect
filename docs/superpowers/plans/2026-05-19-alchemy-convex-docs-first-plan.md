@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **2026-05-19 status:** Superseded by the full implementation plan in `2026-05-19-alchemy-convex-full-implementation-plan.md`. The planned docs exist under `website/src/content/docs/convex/` and the current implementation pass has updated them from docs-first/planned language where the APIs now exist. Historical commit steps below are left unchecked because this work has not been split into the exact commits described here.
+> **2026-05-20 status:** Superseded by the full implementation plan in `2026-05-19-alchemy-convex-full-implementation-plan.md` and the runtime coverage plan in `2026-05-20-convex-runtime-coverage-plan.md`. The planned docs exist under `website/src/content/docs/convex/` and have been updated from docs-first/planned language where the APIs now exist, including runtime deploy2 parity, `TestConvex.fromFiles(...)`, files deployer ownership behavior, promoted component runtime clients, Confect deployer boundaries, and migration history safety. Historical commit steps below are left unchecked because this work has not been split into the exact commits described here.
 
 **Goal:** Write the detailed Convex integration documentation as the product contract before implementing provider/package code.
 

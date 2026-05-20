@@ -101,6 +101,9 @@ export class ConvexRuntimeTransport extends Context.Service<
   ConvexRuntimeTransportService
 >()("Convex::RuntimeTransport") {}
 
+const runtimeBaseUrl = (deploymentUrl: string) =>
+  deploymentUrl.replace(/\/+$/, "");
+
 const call =
   (kind: RuntimeCallKind) =>
   (http: HttpClient.HttpClient) =>
@@ -111,7 +114,7 @@ const call =
     ConvexFunctionError | ConvexHttpError | ConvexProtocolError
   > =>
     Effect.gen(function* () {
-      const baseUrl = input.deploymentUrl.replace(/\/$/, "");
+      const baseUrl = runtimeBaseUrl(input.deploymentUrl);
       const isComponentCall = input.componentPath !== undefined;
       const url = `${baseUrl}/api/${isComponentCall ? "function" : kind}`;
       yield* Effect.annotateCurrentSpan({
@@ -179,7 +182,7 @@ const call =
           ? e
           : makeConvexHttpError({
               method: "POST",
-              url: `${input.deploymentUrl.replace(/\/$/, "")}/api/${
+              url: `${runtimeBaseUrl(input.deploymentUrl)}/api/${
                 input.componentPath ? "function" : kind
               }`,
               status: 0,

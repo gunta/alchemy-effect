@@ -106,9 +106,6 @@ export const FilesDeployer: ConvexDeployer<
         clean: source.cleanGenerated,
       }).pipe(
         Effect.mapError((cause) => {
-          if (cause instanceof BundleFailed) {
-            return cause;
-          }
           const detail =
             cause instanceof UnownedFiles
               ? `${cause._tag}: ${cause.files.join(", ")}`

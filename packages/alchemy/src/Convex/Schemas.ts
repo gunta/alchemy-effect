@@ -15,6 +15,33 @@ export const SecretValueSchema = Schema.Union([
   Schema.Redacted(Schema.String),
 ]);
 
+type ComponentOptionValue =
+  | null
+  | boolean
+  | number
+  | string
+  | Redacted.Redacted<string>
+  | ReadonlyArray<ComponentOptionValue>
+  | { readonly [key: string]: ComponentOptionValue };
+
+const ComponentOptionValueSchema = Schema.suspend(
+  (): Schema.Schema<ComponentOptionValue> =>
+    Schema.Union([
+      Schema.Null,
+      Schema.Boolean,
+      Schema.Number,
+      Schema.String,
+      Schema.Redacted(Schema.String),
+      Schema.Array(ComponentOptionValueSchema),
+      Schema.Record(Schema.String, ComponentOptionValueSchema),
+    ]),
+) as Schema.Schema<ComponentOptionValue> & Schema.Decoder<ComponentOptionValue>;
+
+const ComponentOptionsSchema = Schema.Record(
+  Schema.String,
+  ComponentOptionValueSchema,
+);
+
 export const normalizePropsInput = (value: unknown) =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(
@@ -85,6 +112,9 @@ const structWithUnknownRest = <Fields extends Schema.Struct.Fields>(
   fields: Fields,
 ) => Schema.StructWithRest(Schema.Struct(fields), [JsonRecordSchema]);
 
+const hasControlCharacter = (value: string) =>
+  /[\u0000-\u001F\u007F]/.test(value);
+
 export const TeamReferenceSchema = Schema.Union([
   Schema.String,
   structWithUnknownRest({
@@ -104,31 +134,77 @@ export const ProjectReferenceSchema = Schema.Union([
   }),
 ]);
 
+export const DeploymentIdentityNameSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 &&
+      !/\s/.test(value) &&
+      !hasControlCharacter(value),
+    {
+      message:
+        "deploymentName must not be blank or contain whitespace or control characters.",
+    },
+  ),
+);
+
+export const DeploymentOriginUrlSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string => {
+      try {
+        if (value !== value.trim() || hasControlCharacter(value)) {
+          return false;
+        }
+        const url = new URL(value);
+        return (
+          (url.protocol === "http:" || url.protocol === "https:") &&
+          url.username === "" &&
+          url.password === "" &&
+          /^\/+$/.test(url.pathname) &&
+          url.search === "" &&
+          url.hash === ""
+        );
+      } catch {
+        return false;
+      }
+    },
+    {
+      message:
+        "deploymentUrl must be a valid HTTP(S) origin URL without credentials, whitespace, path, query, or hash components.",
+    },
+  ),
+);
+
+export const DeploymentIdentityReferenceSchema = Schema.Struct({
+  deploymentName: DeploymentIdentityNameSchema,
+  deploymentUrl: DeploymentOriginUrlSchema,
+});
+
 export const DeploymentNameReferenceSchema = Schema.Union([
-  Schema.String,
+  DeploymentIdentityNameSchema,
   structWithUnknownRest({
-    deploymentName: Schema.String,
+    deploymentName: DeploymentIdentityNameSchema,
   }),
 ]);
 
 export const DeploymentUrlReferenceSchema = Schema.Union([
-  Schema.String,
+  DeploymentOriginUrlSchema,
   structWithUnknownRest({
-    deploymentUrl: Schema.String,
-    deploymentName: Schema.optionalKey(Schema.String),
+    deploymentUrl: DeploymentOriginUrlSchema,
+    deploymentName: Schema.optionalKey(DeploymentIdentityNameSchema),
   }),
 ]);
+
+const InvalidDeploymentStringReferenceSchema = Schema.String.pipe(
+  Schema.refine((_value): _value is never => false, {
+    message:
+      "deployment must include deploymentName and deploymentUrl as an object.",
+  }),
+);
 
 export const DeploymentReferenceSchema = Schema.Union([
-  Schema.String,
-  structWithUnknownRest({
-    deploymentName: Schema.String,
-    deploymentUrl: Schema.String,
-  }),
+  DeploymentIdentityReferenceSchema,
+  InvalidDeploymentStringReferenceSchema,
 ]);
-
-const hasControlCharacter = (value: string) =>
-  /[\u0000-\u001F\u007F]/.test(value);
 
 const componentImportString = (message: string) =>
   Schema.String.pipe(
@@ -190,51 +266,6 @@ const ComponentHttpPrefixSchema = Schema.String.pipe(
   ),
 );
 
-export const DeploymentIdentityNameSchema = Schema.String.pipe(
-  Schema.refine(
-    (value): value is string =>
-      value.trim().length > 0 &&
-      !/\s/.test(value) &&
-      !/[\u0000-\u001F\u007F]/.test(value),
-    {
-      message:
-        "deploymentName must not be blank or contain whitespace or control characters.",
-    },
-  ),
-);
-
-export const DeploymentOriginUrlSchema = Schema.String.pipe(
-  Schema.refine(
-    (value): value is string => {
-      try {
-        if (value !== value.trim() || /[\u0000-\u001F\u007F]/.test(value)) {
-          return false;
-        }
-        const url = new URL(value);
-        return (
-          (url.protocol === "http:" || url.protocol === "https:") &&
-          url.username === "" &&
-          url.password === "" &&
-          /^\/+$/.test(url.pathname) &&
-          url.search === "" &&
-          url.hash === ""
-        );
-      } catch {
-        return false;
-      }
-    },
-    {
-      message:
-        "deploymentUrl must be a valid HTTP(S) origin URL without credentials, whitespace, path, query, or hash components.",
-    },
-  ),
-);
-
-export const DeploymentIdentityReferenceSchema = Schema.Struct({
-  deploymentName: DeploymentIdentityNameSchema,
-  deploymentUrl: DeploymentOriginUrlSchema,
-});
-
 export const normalizeDeploymentUrl = (url: string) => url.replace(/\/+$/, "");
 
 export const BundleSourcePathSchema = Schema.String.pipe(
@@ -294,16 +325,51 @@ export const DeploymentPropsSchema = Schema.Struct({
   includeLocal: Schema.optionalKey(Schema.Boolean),
 });
 
-export const ComponentPackageSourceSchema = Schema.Struct({
-  package: ComponentImportStringSchema,
+const ComponentSourceShapeSchema = Schema.Struct({
+  package: Schema.optionalKey(ComponentImportStringSchema),
   version: Schema.optionalKey(ComponentImportStringSchema),
   configExport: Schema.optionalKey(ComponentImportStringSchema),
-});
-
-export const ComponentLocalSourceSchema = Schema.Struct({
-  local: ComponentPathStringSchema,
+  local: Schema.optionalKey(ComponentPathStringSchema),
   configPath: Schema.optionalKey(ComponentPathStringSchema),
 });
+
+type ComponentSourceShape = Schema.Schema.Type<
+  typeof ComponentSourceShapeSchema
+>;
+
+export const ComponentPackageSourceSchema = ComponentSourceShapeSchema.pipe(
+  Schema.refine(
+    (source): source is ComponentSourceShape =>
+      source.package !== undefined && source.local === undefined,
+    {
+      message:
+        "Component sources must provide exactly one of package or local.",
+    },
+  ),
+  Schema.refine(
+    (source): source is ComponentSourceShape => source.configPath === undefined,
+    { message: "Component package sources cannot include configPath." },
+  ),
+);
+
+export const ComponentLocalSourceSchema = ComponentSourceShapeSchema.pipe(
+  Schema.refine(
+    (source): source is ComponentSourceShape =>
+      source.local !== undefined && source.package === undefined,
+    {
+      message:
+        "Component sources must provide exactly one of package or local.",
+    },
+  ),
+  Schema.refine(
+    (source): source is ComponentSourceShape =>
+      source.version === undefined && source.configExport === undefined,
+    {
+      message:
+        "Component local sources cannot include version or configExport.",
+    },
+  ),
+);
 
 export const ComponentSourceSchema = Schema.Union([
   ComponentPackageSourceSchema,
@@ -315,7 +381,7 @@ export const ComponentPropsSchema = Schema.Struct({
   name: Schema.optionalKey(ComponentIdentityStringSchema),
   env: Schema.optionalKey(Schema.Record(Schema.String, SecretValueSchema)),
   httpPrefix: Schema.optionalKey(ComponentHttpPrefixSchema),
-  options: Schema.optionalKey(JsonRecordSchema),
+  options: Schema.optionalKey(ComponentOptionsSchema),
   test: Schema.optionalKey(ComponentTestImportStringSchema),
 });
 
@@ -426,19 +492,75 @@ export const SnapshotExportPropsSchema = Schema.Struct({
   requestId: Schema.optionalKey(Schema.String),
 });
 
+const SnapshotImportSourceTextSchema = Schema.String.pipe(
+  Schema.refine(
+    (value): value is string =>
+      value.trim().length > 0 && !hasControlCharacter(value),
+    {
+      message:
+        "Snapshot import source values must not be blank or contain control characters.",
+    },
+  ),
+);
+
+type SnapshotImportUrlSource = {
+  readonly type: "url";
+  readonly url: string;
+};
+
+type SnapshotImportPathSource = {
+  readonly type: "path";
+  readonly path: string;
+};
+
+type SnapshotImportExportSource = {
+  readonly type: "export";
+  readonly exportId: string;
+};
+
+const SnapshotImportUrlSourceSchema = Schema.Struct({
+  type: Schema.Literal("url"),
+  url: SnapshotImportSourceTextSchema,
+  path: Schema.optionalKey(Schema.Unknown),
+  exportId: Schema.optionalKey(Schema.Unknown),
+}).pipe(
+  Schema.refine(
+    (source): source is SnapshotImportUrlSource =>
+      source.path === undefined && source.exportId === undefined,
+    { message: "Snapshot import URL sources can only include url." },
+  ),
+);
+
+const SnapshotImportPathSourceSchema = Schema.Struct({
+  type: Schema.Literal("path"),
+  url: Schema.optionalKey(Schema.Unknown),
+  path: SnapshotImportSourceTextSchema,
+  exportId: Schema.optionalKey(Schema.Unknown),
+}).pipe(
+  Schema.refine(
+    (source): source is SnapshotImportPathSource =>
+      source.url === undefined && source.exportId === undefined,
+    { message: "Snapshot import path sources can only include path." },
+  ),
+);
+
+const SnapshotImportExportSourceSchema = Schema.Struct({
+  type: Schema.Literal("export"),
+  url: Schema.optionalKey(Schema.Unknown),
+  path: Schema.optionalKey(Schema.Unknown),
+  exportId: SnapshotImportSourceTextSchema,
+}).pipe(
+  Schema.refine(
+    (source): source is SnapshotImportExportSource =>
+      source.url === undefined && source.path === undefined,
+    { message: "Snapshot import export sources can only include exportId." },
+  ),
+);
+
 export const SnapshotImportSourceSchema = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("url"),
-    url: Schema.String,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("path"),
-    path: Schema.String,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("export"),
-    exportId: Schema.String,
-  }),
+  SnapshotImportUrlSourceSchema,
+  SnapshotImportPathSourceSchema,
+  SnapshotImportExportSourceSchema,
 ]);
 
 export const SnapshotImportPropsSchema = Schema.Struct({

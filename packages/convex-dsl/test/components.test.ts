@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import type * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { compileApp, defineApp, defineComponentUse } from "../src/index.ts";
@@ -16,7 +17,10 @@ import {
   OnlineMigrationOptionsSchema,
   defineMigrations,
 } from "../src/components/migrations.ts";
-import { promotedComponentCatalog } from "../src/components/catalog.ts";
+import {
+  promotedComponentCatalog,
+  usePromotedComponent,
+} from "../src/components/catalog.ts";
 import { ActionCache } from "../src/components/action-cache/index.ts";
 import { ActionRetrier } from "../src/components/action-retrier/index.ts";
 import { Agent } from "../src/components/agent/index.ts";
@@ -63,6 +67,246 @@ const promotedInstallers = [
   Workflow.install,
   Workpool.install,
 ] as const;
+
+type RuntimeMethod = (
+  ...args: ReadonlyArray<unknown>
+) => Effect.Effect<unknown, unknown>;
+type RuntimeService = Record<string, RuntimeMethod>;
+type RuntimeLayerFactory = (
+  component?:
+    | string
+    | {
+        readonly name?: string;
+        readonly service?: Partial<RuntimeService>;
+      },
+  service?: Partial<RuntimeService>,
+) => Layer.Layer<unknown, never, never>;
+
+const promotedRuntimeClientCases = [
+  {
+    component: "actionCache",
+    tag: ActionCache,
+    layer: ActionCache.layer,
+    methods: ["get", "set", "invalidate", "invalidateAll"],
+  },
+  {
+    component: "actionRetrier",
+    tag: ActionRetrier,
+    layer: ActionRetrier.layer,
+    methods: ["run", "cancel", "status"],
+  },
+  {
+    component: "agent",
+    tag: Agent,
+    layer: Agent.layer,
+    methods: [
+      "createThread",
+      "continueThread",
+      "generateText",
+      "streamText",
+      "generateObject",
+      "streamObject",
+      "listMessages",
+      "saveMessage",
+      "saveMessages",
+      "createTool",
+    ],
+  },
+  {
+    component: "aggregate",
+    tag: Aggregate,
+    layer: Aggregate.layer,
+    methods: [
+      "count",
+      "sum",
+      "at",
+      "indexOf",
+      "min",
+      "max",
+      "paginate",
+      "insert",
+      "delete",
+      "replace",
+      "replaceOrInsert",
+    ],
+  },
+  {
+    component: "authz",
+    tag: Authz,
+    layer: Authz.layer,
+    methods: [
+      "can",
+      "canWithContext",
+      "canAny",
+      "require",
+      "hasRole",
+      "assignRole",
+      "revokeRole",
+    ],
+  },
+  {
+    component: "betterAuth",
+    tag: BetterAuth,
+    layer: BetterAuth.layer,
+    methods: ["createAuth", "route", "getSession", "requireUser"],
+  },
+  {
+    component: "crons",
+    tag: Crons,
+    layer: Crons.layer,
+    methods: ["register", "unregister", "list", "pause", "resume"],
+  },
+  {
+    component: "geospatial",
+    tag: Geospatial,
+    layer: Geospatial.layer,
+    methods: ["insert", "get", "remove", "query", "nearest", "debugCells"],
+  },
+  {
+    component: "mux",
+    tag: Mux,
+    layer: Mux.layer,
+    methods: [
+      "syncAsset",
+      "syncLiveStream",
+      "createUpload",
+      "verifyWebhook",
+      "backfill",
+    ],
+  },
+  {
+    component: "r2",
+    tag: R2,
+    layer: R2.layer,
+    methods: [
+      "getUrl",
+      "generateUploadUrl",
+      "store",
+      "syncMetadata",
+      "getMetadata",
+      "listMetadata",
+      "deleteObject",
+      "clientApi",
+    ],
+  },
+  {
+    component: "rateLimiter",
+    tag: RateLimiter,
+    layer: RateLimiter.layer,
+    methods: ["limit", "check", "reset"],
+  },
+  {
+    component: "shardedCounter",
+    tag: ShardedCounter,
+    layer: ShardedCounter.layer,
+    methods: ["increment", "decrement", "add", "get", "reset"],
+  },
+  {
+    component: "workflow",
+    tag: Workflow,
+    layer: Workflow.layer,
+    methods: [
+      "start",
+      "status",
+      "cancel",
+      "restart",
+      "sendEvent",
+      "createEvent",
+      "list",
+      "listSteps",
+      "cleanup",
+    ],
+  },
+  {
+    component: "workpool",
+    tag: Workpool,
+    layer: Workpool.layer,
+    methods: [
+      "enqueueAction",
+      "enqueueMutation",
+      "enqueueQuery",
+      "enqueueActions",
+      "enqueueMutations",
+      "enqueueQueries",
+      "cancel",
+      "cancelAll",
+      "status",
+      "statusBatch",
+    ],
+  },
+] as const;
+
+const neutralCostRuntimeClientCases = [
+  {
+    component: "neutralCost",
+    tag: NeutralCost.Reader,
+    layer: NeutralCost.Reader.layer,
+    methods: ["report", "usage", "prices"],
+  },
+  {
+    component: "neutralCost",
+    tag: NeutralCost.Recorder,
+    layer: NeutralCost.Recorder.layer,
+    methods: ["record", "updatePricingData"],
+  },
+  {
+    component: "neutralCost",
+    tag: NeutralCost.Admin,
+    layer: NeutralCost.Admin.layer,
+    methods: ["setPricing", "setMarkup", "refreshReports"],
+  },
+] as const;
+
+const makeInjectedService = (
+  component: string,
+  methods: ReadonlyArray<string>,
+): Partial<RuntimeService> =>
+  Object.fromEntries(
+    methods.map((method) => [
+      method,
+      (...args: ReadonlyArray<unknown>) =>
+        Effect.succeed({ component, method, args }),
+    ]),
+  ) as Partial<RuntimeService>;
+
+const runRuntimeMethod = <R>(
+  tag: unknown,
+  layer: Layer.Layer<R, never, never>,
+  method: string,
+  ...args: ReadonlyArray<unknown>
+) =>
+  Effect.flatMap(tag as Effect.Effect<RuntimeService, unknown, R>, (service) =>
+    service[method](...args),
+  ).pipe(Effect.provide(layer), Effect.runPromise);
+
+const runRuntimeMethodExit = <R>(
+  tag: unknown,
+  layer: Layer.Layer<R, never, never>,
+  method: string,
+  ...args: ReadonlyArray<unknown>
+) =>
+  Effect.flatMap(tag as Effect.Effect<RuntimeService, unknown, R>, (service) =>
+    service[method](...args),
+  ).pipe(Effect.provide(layer), Effect.exit, Effect.runPromise);
+
+const expectUnavailableMethod = (
+  exit: Exit.Exit<unknown, unknown>,
+  component: string,
+  method: string,
+) => {
+  expect(exit._tag).toBe("Failure");
+  if (exit._tag === "Failure") {
+    const failure = exit.cause.reasons.find(Cause.isFailReason);
+    expect(failure).toBeDefined();
+    if (failure) {
+      expect(failure.error).toMatchObject({
+        _tag: "Convex.ComponentClientUnavailable",
+        component,
+        method,
+      });
+    }
+  }
+};
 
 describe("@alchemy/convex promoted components", () => {
   it("exposes catalog metadata for every promoted component", () => {
@@ -192,6 +436,32 @@ describe("@alchemy/convex promoted components", () => {
       package: "@convex-dev/r2",
       version: "^0.10.1",
     });
+  });
+
+  it("installs promoted components from the catalog and exposes generated-code layers as component declarations", () => {
+    expect(
+      usePromotedComponent("R2", {
+        name: "uploads",
+        httpPrefix: "/files",
+      }),
+    ).toMatchObject({
+      _tag: "ComponentUse",
+      id: "r2",
+      name: "uploads",
+      httpPrefix: "/files",
+    });
+
+    const files = compileApp(
+      defineApp({
+        components: {
+          migrations: Migrations.layer({ name: "rollouts" }),
+        },
+      }),
+    );
+
+    expect(files.get("convex/convex.config.ts")).toContain(
+      'app.use(migrations, { name: "rollouts" });',
+    );
   });
 
   it("exposes Effect Schema contracts for component metadata and runtime values", () => {
@@ -433,6 +703,137 @@ describe("@alchemy/convex promoted components", () => {
       NeutralCost.Admin.layer("neutralCost", {}),
     );
     expect(merged).toBeDefined();
+  });
+
+  it("routes every promoted runtime client method through injected Effect services", async () => {
+    for (const [
+      index,
+      { component, tag, layer, methods },
+    ] of promotedRuntimeClientCases.entries()) {
+      const service = makeInjectedService(component, methods);
+      const factory = layer as RuntimeLayerFactory;
+      const runtimeLayer =
+        index % 2 === 0
+          ? factory(component, service)
+          : factory({ name: component, service });
+
+      for (const method of methods) {
+        await expect(
+          runRuntimeMethod(tag, runtimeLayer, method, "resource-1", {
+            nested: true,
+          }),
+        ).resolves.toEqual({
+          component,
+          method,
+          args: ["resource-1", { nested: true }],
+        });
+      }
+    }
+
+    for (const {
+      component,
+      tag,
+      layer,
+      methods,
+    } of neutralCostRuntimeClientCases) {
+      const service = makeInjectedService(component, methods);
+      const runtimeLayer = layer(component, service) as Layer.Layer<
+        unknown,
+        never,
+        never
+      >;
+
+      for (const method of methods) {
+        await expect(
+          runRuntimeMethod(tag, runtimeLayer, method, "resource-1", {
+            nested: true,
+          }),
+        ).resolves.toEqual({
+          component,
+          method,
+          args: ["resource-1", { nested: true }],
+        });
+      }
+    }
+  });
+
+  it("reports default unavailable errors for every promoted runtime client method", async () => {
+    for (const {
+      component,
+      tag,
+      layer,
+      methods,
+    } of promotedRuntimeClientCases) {
+      const runtimeLayer = (layer as RuntimeLayerFactory)(component, {});
+
+      for (const method of methods) {
+        expectUnavailableMethod(
+          await runRuntimeMethodExit(tag, runtimeLayer, method, "resource-1"),
+          component,
+          method,
+        );
+      }
+    }
+
+    for (const {
+      component,
+      tag,
+      layer,
+      methods,
+    } of neutralCostRuntimeClientCases) {
+      const runtimeLayer = layer(component, {}) as Layer.Layer<
+        unknown,
+        never,
+        never
+      >;
+
+      for (const method of methods) {
+        expectUnavailableMethod(
+          await runRuntimeMethodExit(tag, runtimeLayer, method, "resource-1"),
+          component,
+          method,
+        );
+      }
+    }
+  });
+
+  it("keeps Workpool nested config updates injectable and named on missing clients", async () => {
+    await expect(
+      Effect.flatMap(Workpool, (service) =>
+        service.config.update({ maxParallelism: 8 }),
+      ).pipe(
+        Effect.provide(
+          Workpool.layer({
+            name: "backgroundJobs",
+            service: {
+              config: {
+                update: (options) =>
+                  Effect.succeed({
+                    component: "backgroundJobs",
+                    method: "config.update",
+                    options,
+                  }),
+              },
+            },
+          }),
+        ),
+        Effect.runPromise,
+      ),
+    ).resolves.toEqual({
+      component: "backgroundJobs",
+      method: "config.update",
+      options: { maxParallelism: 8 },
+    });
+
+    const exit = await Effect.flatMap(Workpool, (service) =>
+      service.config.update({ maxParallelism: 2 }),
+    ).pipe(
+      Effect.provide(Workpool.layer("backgroundJobs", {})),
+      Effect.exit,
+      Effect.runPromise,
+    );
+
+    expectUnavailableMethod(exit, "backgroundJobs", "config.update");
   });
 
   it("accepts promoted component layers as app component declarations", async () => {

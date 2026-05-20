@@ -242,10 +242,9 @@ export const ComponentProvider = () =>
             news,
           }) {
             if (!isResolved<ComponentProps>(news)) return undefined;
-            if ((olds.name ?? id) !== (news.name ?? id)) {
-              return { action: "replace" } as const;
-            }
-            return undefined;
+            return (olds.name ?? id) !== (news.name ?? id)
+              ? ({ action: "replace" } as const)
+              : undefined;
           }),
           read: Effect.fn("Convex.Component.read")(function* ({ output }) {
             return output;

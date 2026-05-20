@@ -1008,18 +1008,16 @@ export const validateMigrationPlan = (
   for (const previous of options.previous ?? []) {
     const current = activeByName.get(previous.name);
     if (!current) {
-      if (previous.completed && previous.retired !== true) {
+      if (previous.completed && previous.retired !== true)
         throw new Error(
           `Completed migration ${previous.name} was removed without being marked retired.`,
         );
-      }
       continue;
     }
-    if (previous.completed && previous.sourceHash !== current.sourceHash) {
+    if (previous.completed && previous.sourceHash !== current.sourceHash)
       throw new Error(
         `Completed migration ${previous.name} changed source hash. Create a new migration name instead.`,
       );
-    }
   }
   return migrations;
 };

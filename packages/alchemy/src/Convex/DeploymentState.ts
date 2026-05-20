@@ -87,10 +87,9 @@ export const DeploymentStateProvider = () =>
           }) {
             if (!output || !isResolved(news)) return undefined;
             const deployment = deploymentInfo(news.deployment);
-            if (deployment.deploymentUrl !== output.deploymentUrl) {
-              return { action: "replace" } as const;
-            }
-            return undefined;
+            return deployment.deploymentUrl !== output.deploymentUrl
+              ? ({ action: "replace" } as const)
+              : undefined;
           }),
           read: Effect.fn("Convex.DeploymentState.read")(function* ({
             output,
@@ -122,6 +121,7 @@ export const DeploymentStateProvider = () =>
           delete: Effect.fn("Convex.DeploymentState.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             if (output.state === "paused") {
               yield* admin.unpauseDeployment({
                 deploymentUrl: output.deploymentUrl,

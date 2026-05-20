@@ -207,6 +207,7 @@ export const ProjectProvider = () =>
             );
           }),
           delete: Effect.fn("Convex.Project.delete")(function* ({ output }) {
+            if (!output) return;
             yield* api
               .deleteProject({ projectId: output.projectId })
               .pipe(Effect.catchTag("Convex.NotFound", () => Effect.void));

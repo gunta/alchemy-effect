@@ -2,7 +2,16 @@
 
 **Date**: 2026-05-19
 **Author**: Gunther Brunner
-**Status**: Draft, awaiting user review
+**Status**: Implemented in the current worktree; retained as the design record
+
+> 2026-05-20 update: the core provider, DSL, files deployer, runtime
+> deployer, Confect adapter, promoted components, auth declarations,
+> migrations, testing helpers, and admin/management resources described
+> here now exist in source. The runtime deployer has been hardened with
+> Convex CLI deploy2 request-capture parity, strict persisted-state
+> validation, inferred dependency coverage, generated component graph
+> coverage, and local backend lifecycle tests. Historical planned API
+> wording below is preserved as design context where useful.
 
 ---
 
@@ -2508,6 +2517,7 @@ Hand-written docs:
 | `convex/guides/quickstart.mdx` | Convex Plain: existing Convex app, Alchemy manages infra. |
 | `convex/guides/app-quickstart.mdx` | Alchemy Convex golden path. This is the recommended start page. |
 | `convex/guides/runtime-experimental.mdx` | Alchemy Convex Runtime push path, with experimental warning and byte-equivalence caveats. |
+| `convex/guides/runtime-internals.mdx` | Runtime deployer internals PRD covering virtual bundling, deploy2 orchestration, dry-run semantics, persisted state, and incremental module-hash reuse. |
 | `convex/guides/migrating-from-confect.mdx` | Confect Adapter -> Alchemy Convex migration. |
 | `convex/guides/migrations.mdx` | Expand/backfill/contract workflow using `defineMigrations`. |
 | `convex/guides/auth.mdx` | Tier 1 JWT providers, Convex Auth, and Better Auth. |

@@ -7,8 +7,11 @@ sidebar:
 
 > Status: the experimental runtime package exists in source with `AppBundle`,
 > `AppDeploy`, a deploy2 client, virtual file-map bundling, and injectable
-> local-backend process management. It remains experimental because the
-> deploy protocol must continue to track Convex CLI behavior.
+> local-backend process management. The runtime suite now checks the
+> installed Convex CLI deploy2 request shape, persisted Alchemy state,
+> inferred function metadata, local component graphs, source maps, node
+> dependencies, and local backend lifecycle. It remains experimental
+> because the deploy protocol must continue to track Convex CLI behavior.
 
 Alchemy Convex Runtime is **experimental**.
 
@@ -134,8 +137,8 @@ The deploy flow mirrors Convex CLI behavior in four stages:
    handler modules from real source files on disk.
 3. Build the `start_push` payload that Convex expects.
 4. Call the `deploy2` endpoints directly:
-   `start_push`, `wait_for_schema`, `finish_push`, and
-   `report_push_completed`.
+   `start_push`, `evaluate_push` for dry runs, `wait_for_schema`,
+   `finish_push`, and `report_push_completed`.
 
 The docs are explicit about this because the risk is not "runtime push
 sounds fancy." The risk is **protocol drift**.
@@ -158,15 +161,57 @@ The guardrail covers:
 - schema/config/module placement
 - UDF server version, node version, and external node dependency
   metadata
-- brotli deploy2 request headers and endpoint sequencing
+- local and package-backed component definition graphs
+- source-map handling, including source-content controls
+- brotli deploy2 request headers, W3C trace context, and endpoint sequencing
 
 This does not mean every byte is literally identical after
 normalization, but it does mean the runtime deployer is validated
 against the same wire contract Convex itself uses.
 
-The remaining hardening milestone is full bundler parity for arbitrary
-Convex source trees, including complex component graphs and `"use node"`
-external dependency layouts.
+The current hardening milestone is keeping this parity broad as Convex
+adds deploy2 fields. The tested surface includes extensionless modules,
+`"use node"` inference, local and package component configs, recursive
+component dependencies, package `convex` conditional exports, external
+Node dependencies, source-map options, and incremental unchanged-module
+hash reuse.
+
+For the implementation contract behind those guardrails, see
+[Convex Runtime Internals](/convex/guides/runtime-internals).
+
+## Runtime bundle options
+
+The runtime deployer reads the same app declaration as the files deployer,
+then applies runtime-specific bundle options at the deployer boundary:
+
+```ts
+const backend = yield* App("Backend", {
+  deployment,
+  source: {
+    app,
+    projectRoot: process.cwd(),
+    deploy: true,
+    adminKey,
+    externalPackages: ["stripe", "@aws-sdk/client-s3"],
+    nodeVersion: "20",
+    generateSourceMaps: true,
+    includeSourcesContent: false,
+  },
+});
+```
+
+Those options are validated before bundling or deploy2 I/O. The deployer
+also reads supported `convex.json` runtime fields from `projectRoot`
+(`functions`, `node.externalPackages`, `node.nodeVersion`, and
+`bundler.includeSourcesContent`), with explicit source options taking
+precedence. Unknown future Convex config keys are ignored so new CLI
+fields do not break existing Alchemy bundles.
+
+`externalPackages` accepts package names and `"*"`, not subpath imports.
+The runtime keeps Alchemy and Convex helper packages bundled, applies
+externalization only to generated Node-runtime modules, infers dependency
+versions from ancestor `node_modules` directories, and skips absent
+optional dependencies while failing malformed package metadata clearly.
 
 ## When to avoid Alchemy Convex Runtime
 
@@ -306,6 +351,11 @@ Known differences include:
 - IDE and CI typechecking stay responsible for source type checks
 - dashboard source views may show bundled output rather than authored
   modules
+- same-bundle deploys can reuse deployed module hashes, so backend
+  pushes send only changed modules when previous Alchemy state proves
+  the unchanged module identity
+- dry runs use `evaluate_push` and wait for schema, but do not finish the
+  push, report completion telemetry, or persist deployed module hashes
 
 Those trade-offs are acceptable only because the authoring API stays
 typed from the `defineApp` source of truth.
@@ -324,3 +374,6 @@ team has a concrete reason to prefer:
 
 That keeps the risky part narrow while still letting the runtime
 deployer exist for the teams that really want it.
+
+For protocol, state, bundling, and deploy2 details, read
+[Convex Runtime Internals](/convex/guides/runtime-internals).

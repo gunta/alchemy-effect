@@ -5,9 +5,10 @@ sidebar:
   order: 102
 ---
 
-> Status: `TestConvex.layer(app)` is implemented in
-> `@alchemy/convex/test`. It compiles the same app declaration used by
-> deployers and returns an injectable Effect-backed test service.
+> Status: `TestConvex.layer(app)` and `TestConvex.fromFiles(files)` are
+> implemented in `@alchemy/convex/test`. They use the same compiled app
+> declaration or generated file map used by deployers and return an
+> injectable Effect-backed test service.
 
 Testing is one of the strongest reasons to keep the Convex integration
 Effect-native. The contract is that the same app bundle used for
@@ -45,6 +46,46 @@ test("create + list", async () => {
 
 Tests should exercise the real generated code, not a parallel
 hand-written adapter.
+
+## Metadata-only generated-file tests
+
+`TestConvex.fromFiles(files)` creates the same virtual backend from an
+already compiled generated file map. This is useful for deployer tests,
+fixtures, and generated-file drift checks where you want to validate
+manifest metadata without recompiling the app declaration.
+
+```ts
+import { compileApp } from "@alchemy/convex";
+import { TestConvex } from "@alchemy/convex/test";
+import * as Effect from "effect/Effect";
+import app from "../src/convex/app";
+
+const files = compileApp(app);
+const backend = await Effect.runPromise(TestConvex.fromFiles(files));
+const metadata = await Effect.runPromise(backend.metadata);
+
+expect([...metadata.files.keys()]).toContain("convex/_alchemy/manifest.json");
+```
+
+By default, a `fromFiles(...)` backend is metadata-only. Calling `run`
+without an injected runner fails with `TestConvexRunnerUnavailable`, so a
+test cannot accidentally treat manifest coverage as handler execution:
+
+```ts
+const backend = await Effect.runPromise(
+  TestConvex.fromFiles(files, {
+    run: (name, args) =>
+      Effect.succeed({ name, args }),
+  }),
+);
+
+expect(
+  await Effect.runPromise(backend.run("notes:create", { text: "hello" })),
+).toEqual({
+  name: "notes:create",
+  args: { text: "hello" },
+});
+```
 
 ## Component test helpers
 
@@ -116,8 +157,10 @@ in [`AiGateway.test.ts`](https://github.com/Distilled-Cloud/alchemy-effect/blob/
 | Schema compiler | Compileable shapes succeed and forbidden shapes fail cleanly |
 | Typed errors | Domain failures round-trip without becoming string payloads |
 | HTTP adapter | `convexHttpAction(...)` preserves Effect HttpApi semantics |
-| Component wrappers | Runtime layer behavior matches generated refs and test packages |
+| Component wrappers | Runtime layer behavior matches generated refs, injected services, missing-client failures, and test packages |
 | Secrets | Redacted values never leak into snapshots, logs, or generated source |
+| Deployer boundaries | Files, runtime, and Confect deployers reject malformed source before filesystem, process, or network side effects |
+| Persisted state | Runtime bundle/deploy state and generated-file manifests decode before reuse |
 
 For typed errors, prefer `Effect.exit(...)` and assert on the failed tagged
 value or on `Convex.FunctionError.errorKind`. Do not snapshot Convex's
@@ -140,6 +183,7 @@ swappable in tests without changing handler or resource code:
 
 ```sh
 bun test
+bun test packages/convex-dsl/test/*.test.ts packages/convex-runtime/test/*.test.ts packages/convex-files/test/*.test.ts packages/convex-confect/test/*.test.ts packages/alchemy/test/Convex/*.test.ts --coverage --coverage-reporter=lcov --coverage-dir=/tmp/convex-family-coverage
 alchemy codegen --check
 ```
 
@@ -154,6 +198,8 @@ alchemy codegen --check
 
 - `TestConvex.layer(app)` is meant to prove the generated app bundle, not to
   replace end-to-end tests.
+- `TestConvex.fromFiles(files)` proves generated-file metadata and helper
+  discovery. Inject a runner before using it for behavioral handler tests.
 - If a component has its own test package, use it. Recreating upstream helper
   behavior by hand usually hides real integration gaps.
 - Secret handling belongs in tests too. A green test suite that leaks redacted

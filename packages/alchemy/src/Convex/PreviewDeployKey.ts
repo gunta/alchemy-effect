@@ -159,6 +159,7 @@ export const PreviewDeployKeyProvider = () =>
           delete: Effect.fn("Convex.PreviewDeployKey.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             yield* api
               .deletePreviewDeployKey({
                 projectId: output.projectId,

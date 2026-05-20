@@ -3,7 +3,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { defineApp, defineComponentUse } from "../src/index.ts";
 import { defineMigrations } from "../src/migrations.ts";
-import { TestConvex, TestConvexMetadataSchema } from "../src/test/index.ts";
+import {
+  TestConvex,
+  TestConvexManifestInvalid,
+  TestConvexMetadataSchema,
+  TestConvexRunnerUnavailable,
+} from "../src/test/index.ts";
 
 describe("@alchemy/convex/test", () => {
   it("builds a TestConvex layer from app metadata and auto-registers component helpers", async () => {
@@ -58,5 +63,58 @@ describe("@alchemy/convex/test", () => {
       name: "notes:create",
       args: { text: "hi" },
     });
+  });
+
+  it("builds metadata-only virtual backends from precompiled files", async () => {
+    const files = new Map([
+      [
+        "convex/_alchemy/manifest.json",
+        `${JSON.stringify({
+          components: [
+            {
+              id: "search",
+              name: "search",
+            },
+            {
+              id: "rag",
+              name: "rag",
+              test: "@convex-dev/rag/test",
+            },
+          ],
+        })}\n`,
+      ],
+    ]);
+    const backend = await TestConvex.fromFiles(files).pipe(Effect.runPromise);
+    const metadata = await backend.metadata.pipe(Effect.runPromise);
+
+    expect(metadata.files).toBe(files);
+    expect(metadata.components).toEqual([
+      {
+        id: "rag",
+        name: "rag",
+        test: "@convex-dev/rag/test",
+      },
+    ]);
+
+    const missing = await backend
+      .run("notes:list")
+      .pipe(Effect.flip, Effect.runPromise);
+
+    expect(missing).toBeInstanceOf(TestConvexRunnerUnavailable);
+    expect((missing as TestConvexRunnerUnavailable).name).toBe("notes:list");
+    expect((missing as TestConvexRunnerUnavailable).message).toContain(
+      "metadata-only",
+    );
+  });
+
+  it("reports malformed generated manifests when loading precompiled files", async () => {
+    const failure = await TestConvex.fromFiles(
+      new Map([["convex/_alchemy/manifest.json", "{ nope"]]),
+    ).pipe(Effect.flip, Effect.runPromise);
+
+    expect(failure).toBeInstanceOf(TestConvexManifestInvalid);
+    expect((failure as TestConvexManifestInvalid).message).toContain(
+      "could not be decoded",
+    );
   });
 });

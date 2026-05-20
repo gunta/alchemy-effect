@@ -15,6 +15,11 @@ export interface ServiceLike {
   kind: "Service";
 }
 
+const logicalIdForNamespace = (resource: unknown) =>
+  typeof resource === "object" && resource !== null && "LogicalId" in resource
+    ? String((resource as { readonly LogicalId: unknown }).LogicalId)
+    : "<unknown>";
+
 export interface ServiceShape<
   Identifier extends string,
   Shape extends (...args: any[]) => Effect.Effect<any, any, any>,
@@ -165,7 +170,7 @@ export const Policy =
               ).pipe(
                 Effect.flatMap((args) =>
                   fn(...args).pipe(
-                    Namespace.push((resource as ResourceLike).LogicalId),
+                    Namespace.push(logicalIdForNamespace(resource)),
                   ),
                 ),
               ),

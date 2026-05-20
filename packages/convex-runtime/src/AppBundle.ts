@@ -706,27 +706,30 @@ const packageDirectoryFromName = (name: string) =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const findPackageJson = (projectRoot: string, name: string) =>
+export const findPackageJson = (projectRoot: string, name: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const packageDirectory = packageDirectoryFromName(name);
-    let current = projectRoot;
-    while (true) {
-      const candidate = path.join(
-        current,
-        "node_modules",
-        packageDirectory,
-        "package.json",
-      );
-      const exists = yield* fs
-        .exists(candidate)
-        .pipe(Effect.catch(() => Effect.succeed(false)));
-      if (exists) return candidate;
-      const parent = path.dirname(current);
-      if (parent === current) return undefined;
-      current = parent;
-    }
+    const findFrom = (
+      current: string,
+    ): Effect.Effect<string | undefined, never, FileSystem.FileSystem> =>
+      Effect.gen(function* () {
+        const candidate = path.join(
+          current,
+          "node_modules",
+          packageDirectory,
+          "package.json",
+        );
+        const exists = yield* fs
+          .exists(candidate)
+          .pipe(Effect.catch(() => Effect.succeed(false)));
+        if (exists) return candidate;
+        const parent = path.dirname(current);
+        if (parent === current) return undefined;
+        return yield* findFrom(parent);
+      });
+    return yield* findFrom(projectRoot);
   });
 
 const peerAndOptionalDependenciesFromPackageJson = (
@@ -1110,18 +1113,14 @@ const localComponentDefinitionNode = (
     };
   });
 
-const esbuildErrorTexts = (cause: unknown): ReadonlyArray<string> => {
-  if (
-    isRecord(cause) &&
-    Array.isArray(cause.errors) &&
-    cause.errors.every(
-      (error) => isRecord(error) && typeof error.text === "string",
-    )
-  ) {
-    return cause.errors.map((error) => error.text as string);
-  }
-  return [String(cause)];
-};
+export const esbuildErrorTexts = (cause: unknown): ReadonlyArray<string> =>
+  isRecord(cause) &&
+  Array.isArray(cause.errors) &&
+  cause.errors.every(
+    (error) => isRecord(error) && typeof error.text === "string",
+  )
+    ? cause.errors.map((error) => error.text as string)
+    : [String(cause)];
 
 const isEsbuildResolveMiss = (cause: unknown, importSpecifier: string) => {
   const texts = esbuildErrorTexts(cause);
@@ -1134,6 +1133,37 @@ const isEsbuildResolveMiss = (cause: unknown, importSpecifier: string) => {
 
 type ComponentConfigResolveBuildResult = esbuild.BuildResult & {
   readonly metafile: esbuild.Metafile;
+};
+
+type ComponentConfigResolveMetafile = {
+  readonly inputs: Readonly<
+    Record<
+      string,
+      {
+        readonly imports: ReadonlyArray<{
+          readonly original?: string;
+          readonly path: string;
+        }>;
+      }
+    >
+  >;
+};
+
+export const componentConfigPathFromResolveBuildResult = (
+  path: Path.Path,
+  projectRoot: string,
+  importSpecifier: string,
+  result: { readonly metafile: ComponentConfigResolveMetafile },
+) => {
+  const imported = Object.values(result.metafile.inputs)
+    .flatMap((input) => input.imports)
+    .find((input) => input.original === importSpecifier);
+  if (imported === undefined) {
+    throw new Error(
+      `Component package source ${JSON.stringify(importSpecifier)} did not resolve to a component config import.`,
+    );
+  }
+  return path.resolve(projectRoot, imported.path);
 };
 
 const resolvePackageComponentConfigCandidate = (
@@ -1166,17 +1196,13 @@ const resolvePackageComponentConfigCandidate = (
   }).pipe(
     Effect.flatMap((result) =>
       Effect.try({
-        try: () => {
-          const imported = Object.values(result.metafile.inputs)
-            .flatMap((input) => input.imports)
-            .find((input) => input.original === importSpecifier);
-          if (imported === undefined) {
-            throw new Error(
-              `Component package source ${JSON.stringify(importSpecifier)} did not resolve to a component config import.`,
-            );
-          }
-          return path.resolve(projectRoot, imported.path);
-        },
+        try: () =>
+          componentConfigPathFromResolveBuildResult(
+            path,
+            projectRoot,
+            importSpecifier,
+            result,
+          ),
         catch: (cause) => cause,
       }),
     ),
@@ -1306,7 +1332,10 @@ const validateComponentDefinitionEntryPath = (
     );
   });
 
-const componentOutputPathFromEsbuild = (outdir: string, outputPath: string) => {
+export const componentOutputPathFromEsbuild = (
+  outdir: string,
+  outputPath: string,
+) => {
   const prefix = `${outdir.replace(/\/$/, "")}/`;
   return posixPath(
     outputPath.startsWith(prefix)
@@ -1397,7 +1426,7 @@ const componentDefinitionDependencyAliases = (
     return aliases;
   });
 
-const componentDefinitionDependencyPlugin = (
+export const componentDefinitionDependencyPlugin = (
   path: Path.Path,
   aliases: ReadonlyMap<string, string>,
 ): esbuild.Plugin => ({
@@ -1478,7 +1507,7 @@ const buildPhysicalDefinition = (
     });
   });
 
-const moduleFromPhysicalDefinitionBuild = (
+export const moduleFromPhysicalDefinitionBuild = (
   entryPath: string,
   modulePath: string,
   result: PhysicalDefinitionBuildResult,

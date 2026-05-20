@@ -46,12 +46,53 @@ describe("@alchemy/convex server/httpApi", () => {
     });
   });
 
+  it("adapts function APIs, toWebHandler APIs, and promise-backed responses", async () => {
+    const direct = convexHttpAction((request: Request, ctx: unknown) =>
+      Promise.resolve(
+        Response.json({
+          path: new URL(request.url).pathname,
+          deployment: (ctx as { deployment: string }).deployment,
+        }),
+      ),
+    );
+    const directResponse = await direct(
+      { deployment: "dev" },
+      new Request("https://example.com/direct"),
+    );
+
+    expect(await directResponse.json()).toEqual({
+      path: "/direct",
+      deployment: "dev",
+    });
+
+    const web = convexHttpAction({
+      toWebHandler: () => ({
+        handler: (request: Request) =>
+          new Response(new URL(request.url).pathname),
+      }),
+    });
+    const webResponse = await web(
+      {},
+      new Request("https://example.com/from-web-handler"),
+    );
+
+    expect(await webResponse.text()).toBe("/from-web-handler");
+  });
+
   it("declares deterministic HTTP mount metadata", () => {
     const api = () => Effect.succeed(new Response("notes"));
+    const webApi = {
+      toWebHandler: () => ({
+        handler: () => Effect.succeed(new Response("web")),
+      }),
+    };
     const http = defineHttp({
       "/api/": {
         api,
         layer: Layer.empty,
+      },
+      "/web": {
+        api: webApi,
       },
       "/health": {
         handler: () => Effect.succeed(new Response("ok")),
@@ -64,6 +105,9 @@ describe("@alchemy/convex server/httpApi", () => {
         "/api/": {
           api,
           layer: Layer.empty,
+        },
+        "/web": {
+          api: webApi,
         },
         "/health": {
           handler: http.routes["/health"]!.handler,
@@ -108,5 +152,30 @@ describe("@alchemy/convex server/httpApi", () => {
         },
       }),
     ).toThrow(/not both/i);
+    expect(() =>
+      defineHttp({
+        "/bad-api": {
+          api: {
+            handler: "not a function",
+          },
+        },
+      } as never),
+    ).toThrow(/HTTP API/i);
+    expect(() => convexHttpAction({} as never)).toThrow(/requires a function/i);
+  });
+
+  it("surfaces synchronous and promise HTTP handler failures as rejected actions", async () => {
+    await expect(
+      convexHttpAction(() => {
+        throw new Error("sync boom");
+      })({}, new Request("https://example.com/sync-fail")),
+    ).rejects.toThrow("sync boom");
+
+    await expect(
+      convexHttpAction(() => Promise.reject(new Error("promise boom")))(
+        {},
+        new Request("https://example.com/promise-fail"),
+      ),
+    ).rejects.toThrow("promise boom");
   });
 });

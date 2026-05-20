@@ -152,6 +152,7 @@ export const CustomDomainProvider = () =>
           delete: Effect.fn("Convex.CustomDomain.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             yield* api
               .deleteCustomDomain({
                 deploymentName: output.deploymentName,

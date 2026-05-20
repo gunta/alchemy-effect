@@ -1,4 +1,8 @@
-import { ConvexRuntimeTransport, ConvexRuntimeTransportLive } from "@/Convex";
+import {
+  ConvexHttpError,
+  ConvexRuntimeTransport,
+  ConvexRuntimeTransportLive,
+} from "@/Convex";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -45,6 +49,26 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
   });
 
 describe("Convex RuntimeClient", () => {
+  it.effect("canonicalizes repeated deployment URL trailing slashes", () => {
+    const { layer, get } = harness(
+      jsonResponse({
+        status: "success",
+        value: { ok: true },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const transport = yield* ConvexRuntimeTransport;
+      const result = yield* transport.query({
+        deploymentUrl: "https://calm-cat-123.convex.cloud///",
+        functionName: "messages:list",
+      });
+
+      expect(result).toEqual({ ok: true });
+      expect(get().url).toBe("https://calm-cat-123.convex.cloud/api/query");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("unwraps successful public HTTP API function envelopes", () => {
     const { layer, get } = harness(
       jsonResponse({
@@ -176,6 +200,78 @@ describe("Convex RuntimeClient", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect(
+    "maps public HTTP API transport failures to ConvexHttpError",
+    () => {
+      const { layer } = harness(
+        jsonResponse(
+          {
+            code: "Overloaded",
+            message: "try again later",
+          },
+          { status: 503 },
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const transport = yield* ConvexRuntimeTransport;
+        const exit = yield* Effect.exit(
+          transport.query({
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+            functionName: "messages:list",
+          }),
+        );
+
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          const failure = exit.cause.reasons.find(Cause.isFailReason);
+          expect(failure?.error).toBeInstanceOf(ConvexHttpError);
+          expect(failure?.error).toMatchObject({
+            _tag: "Convex.HttpError",
+            status: 503,
+            body: '{"code":"Overloaded","message":"try again later"}',
+            code: "Overloaded",
+            errorKind: "overloaded",
+            retryable: true,
+          });
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("wraps unexpected runtime transport failures", () => {
+    const client = HttpClient.make(() =>
+      Effect.fail(new Error("socket closed") as never),
+    );
+    const layer = ConvexRuntimeTransportLive.pipe(
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+    );
+
+    return Effect.gen(function* () {
+      const transport = yield* ConvexRuntimeTransport;
+      const exit = yield* Effect.exit(
+        transport.action({
+          deploymentUrl: "https://calm-cat-123.convex.cloud///",
+          componentPath: "billing",
+          functionName: "jobs:sync",
+        }),
+      );
+
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        const failure = exit.cause.reasons.find(Cause.isFailReason);
+        expect(failure?.error).toBeInstanceOf(ConvexHttpError);
+        expect(failure?.error).toMatchObject({
+          _tag: "Convex.HttpError",
+          method: "POST",
+          url: "https://calm-cat-123.convex.cloud/api/function",
+          status: 0,
+          body: "Error: socket closed",
+        });
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("calls component functions through the component-aware API", () => {
     const { layer, get } = harness(

@@ -5,7 +5,10 @@ sidebar:
   order: 93
 ---
 
-> Status: the Confect bridge exists in source as `@alchemy/convex-confect`, including `fromConfect(...)`, `ConfectDeployer`, and the convenience `App(...)` construct.
+> Status: the Confect bridge exists in source as `@alchemy/convex-confect`,
+> including `fromConfect(...)`, `ConfectDeployer`, `ConfectCliLive`,
+> typed Confect build/CLI errors, and the convenience `App(...)`
+> construct.
 
 This guide covers **Confect Adapter** and the migration path
 from a Confect-authored Convex app to the Alchemy Convex DSL.
@@ -49,6 +52,13 @@ const backend = yield* App("Backend", {
 
 This gets you Alchemy lifecycle, plans, and infra composition without
 forcing an immediate authoring migration.
+
+The adapter validates Confect deploy sources before it runs a build or
+delegates to the Convex CLI. Build failures are preserved as
+`ConfectBuildFailed`, unexpected process failures become
+`ConfectCliError`, and invalid bridge input fails before filesystem or
+bundle side effects. That keeps the migration boundary debuggable even
+while the app is still authored in Confect.
 
 ## What maps cleanly
 
@@ -139,6 +149,12 @@ The intent is:
 
 This adapter is intentionally described as optional. It should help
 with migration pressure, not define the long-term native API.
+
+If you use the higher-level `App(...)` construct, the same validation and
+build/deploy behavior is wired into the generic `Convex.App` deployer
+contract. That means previous deployer state, dry-run forwarding, and
+deployment URL canonicalization behave like the files and runtime
+deployers rather than like a one-off script wrapper.
 
 ## Suggested migration path
 

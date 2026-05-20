@@ -7,6 +7,7 @@ import {
   MigrationSetSchema,
   OnlineMigrationPropsSchema,
   PatchMigrationPropsSchema,
+  validateMigrationPlan,
   migrationModuleMetadata,
 } from "../src/migrations.ts";
 
@@ -218,7 +219,73 @@ describe("@alchemy/convex migrations", () => {
     );
   });
 
+  it("declares table migrations and required schema-field requirements", () => {
+    const Notes = {
+      tableName: "notes",
+    } as const;
+    const migrations = defineMigrations((m) => [
+      m.table("20260519_scan_notes", {
+        table: Notes,
+        operation: "scan",
+        batchSize: 10,
+        verify: {
+          remaining: (ctx: unknown) => ctx,
+        },
+        requires: [m.schemaField(Notes, "title").required(Schema.String)],
+      }),
+    ]);
+
+    expect(migrations.declarations[0]).toMatchObject({
+      kind: "table",
+      name: "20260519_scan_notes",
+      table: "notes",
+      operation: "scan",
+      batchSize: 10,
+      phase: "expand",
+    });
+    expect(migrations.declarations[0]?.requires).toContainEqual({
+      _tag: "SchemaFieldRequirement",
+      table: "notes",
+      field: "title",
+      mode: "required",
+      schema: Schema.String,
+    });
+  });
+
+  it("rejects invalid migration names and table references early", () => {
+    expect(() =>
+      defineMigrations((m) => [
+        m.backfill("rename_titles", {
+          table: "notes",
+          migrateOne: "() => ({})",
+        }),
+      ]),
+    ).toThrow(/date-like prefix/);
+
+    expect(() =>
+      defineMigrations((m) => [
+        m.backfill("20260519_bad_table", {
+          table: "notes",
+          migrateOne: "() => ({})",
+          requires: [
+            m.schemaField({} as never, "title").required(Schema.String),
+          ],
+        }),
+      ]),
+    ).toThrow(/Migration table/);
+  });
+
   it("rejects production patches unless dry-run and bounded execution are explicit", () => {
+    expect(() =>
+      defineMigrations((m) => [
+        m.patch("20260519_prod_patch_titles", {
+          table: "notes",
+          scope: "prod",
+          patch: () => ({ title: "safe" }),
+        }),
+      ]),
+    ).toThrow(/allowProduction/);
+
     expect(() =>
       defineMigrations((m) => [
         m.patch("20260519_prod_patch_titles", {
@@ -263,6 +330,17 @@ describe("@alchemy/convex migrations", () => {
         title: Schema.optionalKey(Schema.String),
       }),
     } as const;
+    expect(() =>
+      defineMigrations((m) => [
+        m.patch("20260519_remove_note_title", {
+          table: Notes,
+          removes: ["title"],
+          maxDocuments: 100,
+          patch: () => ({ title: undefined }),
+        }),
+      ]),
+    ).toThrow(/destructive/);
+
     expect(() =>
       defineMigrations((m) => [
         m.patch("20260519_remove_note_title", {
@@ -333,5 +411,68 @@ describe("@alchemy/convex migrations", () => {
         ],
       }),
     ).toThrow(/changed source hash/);
+
+    expect(() =>
+      validateMigrationPlan(
+        defineMigrations(() => []),
+        {
+          previous: [
+            {
+              name: "20260519_removed_completed",
+              sourceHash: "sha256:abc",
+              completed: true,
+            },
+          ],
+        },
+      ),
+    ).toThrow(/removed without being marked retired/);
+
+    expect(() =>
+      validateMigrationPlan(
+        defineMigrations(() => []),
+        {
+          previous: [
+            {
+              name: "20260519_retired_completed",
+              sourceHash: "sha256:abc",
+              completed: true,
+              retired: true,
+            },
+            {
+              name: "20260519_incomplete_removed",
+              sourceHash: "sha256:def",
+              completed: false,
+            },
+          ],
+        },
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      defineMigrations((m) => [
+        m.backfill("20260519_duplicate", {
+          table: "notes",
+          migrateOne: "() => ({})",
+        }),
+        m.patch("20260519_duplicate", {
+          table: "notes",
+          maxDocuments: 1,
+          patch: () => ({}),
+        }),
+      ]),
+    ).toThrow(/Duplicate migration name/);
+
+    expect(() =>
+      defineMigrations((m) => [
+        m.backfill("20260519_a__b", {
+          table: "notes",
+          migrateOne: "() => ({})",
+        }),
+        m.backfill("20260519_a_b", {
+          table: "notes",
+          migrateOne: "() => ({})",
+        }),
+      ]),
+    ).toThrow(/Duplicate generated migration export/);
   });
 });

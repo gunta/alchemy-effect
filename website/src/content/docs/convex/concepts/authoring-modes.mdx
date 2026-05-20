@@ -8,7 +8,10 @@ sidebar:
 > Status: these four package-mode surfaces and generic DSL component
 > installs exist in source. Promoted component wrappers, auth declaration
 > resources, test helpers, HTTP adapters, and migration codegen also exist
-> in the current package surfaces.
+> in the current package surfaces. The runtime deployer now has
+> CLI-parity deploy2 request tests and strict persisted-state validation,
+> but remains experimental because it tracks Convex's private deploy
+> protocol directly.
 
 ## Overview
 
@@ -129,6 +132,13 @@ This mode exists for teams that want the strongest "one program"
 story, but it is explicitly experimental because it depends on close
 protocol compatibility with Convex's own tooling.
 
+The runtime deployer is no longer a thin proof of concept: it validates
+deploy2 request/response envelopes, incremental module-hash state,
+source maps, node dependencies, local component graphs, and local
+backend lifecycle through injected services. The remaining risk is not
+Alchemy state management; it is the upstream protocol contract changing
+under a direct client.
+
 ## Confect Adapter
 
 Confect Adapter keeps Confect as the authoring layer and adds Alchemy around
@@ -163,7 +173,8 @@ difference is the deployer:
 | Source of truth | `App.make(...)` | `App.make(...)` |
 | Generated files on disk | Yes, under `convex/_alchemy/**` plus `convex/convex.config.ts` when components are declared | No |
 | Final deploy path | `convex deploy` | Runtime `deploy2` protocol |
-| Stability target | Default production path | Experimental |
+| State model | Generated-file manifest plus optional CLI bundle hash | In-memory bundle state plus deployed module hashes, dry-run pruning, and strict persisted-state schemas |
+| Stability target | Default production path | Experimental, protocol-tracked |
 
 That shared contract is important because it keeps teams from getting
 locked into one deployment mechanism.

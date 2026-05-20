@@ -125,6 +125,7 @@ export const DeployKeyProvider = () =>
             };
           }),
           delete: Effect.fn("Convex.DeployKey.delete")(function* ({ output }) {
+            if (!output) return;
             yield* api
               .deleteDeployKey({
                 deploymentName: output.deploymentName,

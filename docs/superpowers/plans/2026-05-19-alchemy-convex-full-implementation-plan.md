@@ -137,7 +137,7 @@
 - [x] Implement injectable `DeployApi` service with deploy2 orchestration and tagged schema errors.
 - [x] Implement `AppDeploy` resource for start/evaluate, schema wait, finish, telemetry, and bundle-hash idempotence.
 - [x] Implement live brotli HTTP `DeployApi` layer and injectable `LocalBackend` resource.
-- [x] Add modeled deploy2 body test; full CLI byte-equivalence fixture is deferred until a captured Convex CLI push request fixture is available.
+- [x] Add modeled deploy2 body tests and a Convex CLI request-capture parity fixture that round-trips the installed CLI's hidden `start_push` request through the runtime deploy2 model.
 
 ## Task 10: Confect Adapter Package
 
@@ -183,4 +183,5 @@
 - [x] Implement `@alchemy/convex/server` runtime services (`DatabaseReader`, `DatabaseWriter`, `Auth`, function runners, and storage wrappers) and wire generated query/mutation/action wrappers to provide them.
 - [x] Add public package subpath exports for components, migrations, HTTP API, tests, and ESLint plugin.
 - [x] Update Convex docs/status text to reflect implemented component/auth/migration/testing surfaces.
+- [x] Update Convex runtime/testing/generated-files/component/migration/Confect docs after the full Convex-family coverage pass, including `TestConvex.fromFiles(...)`, deploy2 parity, persisted-state validation, files deployer ownership, promoted runtime clients, and migration history safety.
 - [x] Re-audit dashboard-plane resources against the current public Convex Management API and Deployment Platform API: team invites, member role updates, custom roles, deploy-key reads, preview deploy keys, and personal access tokens are implemented; team creation, team access token creation, deployment transfer, deployment class/region listing, and team-wide deployment listing remain SDK-only or manual candidates because they are create-only/operation/data-source APIs rather than idempotent stack resources; backup scheduling, manual backups, SSO setup, and OAuth app registration remain dashboard/business/manual because no public lifecycle endpoints are exposed for those surfaces.

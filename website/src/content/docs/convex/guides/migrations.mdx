@@ -97,6 +97,13 @@ For lightweight maintenance work, the same module also supports:
 | `m.table(...)` / `m.backfill(...)` | Lower-level staged backfills when you already know the rollout shape | Allowed, but less guided |
 | `m.patch(...)` | Small source-controlled data edits that replace dashboard bulk edit | Defaults to `scope: "dev"` and refuses prod unless explicitly unlocked |
 
+Patch migrations are intentionally noisy around production safety. A
+production patch must set `allowProduction: true`, set
+`dryRunFirst: true`, and include a bounded execution shape such as
+`maxDocuments`, `batchSize`, or `schedule.maxParallelBatches`. A patch
+that removes a field must also set `destructive: true` and include an
+optional schema-field proof for every removed field.
+
 ## What gets generated
 
 Alchemy Convex writes the migration implementation to
@@ -194,6 +201,24 @@ Migrations
 | Contract requires clean `verify` output | You should not narrow schema or remove readers while old documents remain |
 | Dual-write is the default for renames | It keeps rollback to the old code path viable |
 | `m.patch(...)` cannot remove a field unless explicitly destructive | Small maintenance patches should not become silent schema contractions |
+| Generated export names must be unique | Similar migration names such as `20260519_a__b` and `20260519_a_b` would otherwise collide in generated TypeScript |
+
+## Previous migration state
+
+When a deployer has prior migration state, `validateMigrationPlan(...)`
+checks that state before generated modules are trusted:
+
+- a completed migration that is still active must keep the same
+  `sourceHash`,
+- a completed migration that disappears from the active declaration set
+  must be marked `retired: true`,
+- a retired completed migration may stay out of the active set,
+- an incomplete migration may be removed before it has run,
+- duplicate migration names and duplicate generated export names are
+  rejected before generated files are emitted.
+
+That keeps Alchemy state honest without requiring teams to carry every
+abandoned draft migration forever.
 
 ## Recommended production sequence
 

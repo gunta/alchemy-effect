@@ -12,6 +12,9 @@ sidebar:
 > resources, migration codegen, test helpers, HTTP adapters, and deployment
 > admin actions, typed runtime/admin error classification, plus
 > team invitation/member-role resources from the public Management API.
+> The current Convex-family test frontier covers the DSL, runtime,
+> generated-files, Confect adapter, and `alchemy/Convex` provider source
+> packages with no uncovered source lines in the targeted lcov sweep.
 
 ## Overview
 
@@ -42,7 +45,7 @@ The Convex integration follows the same five rules everywhere:
 | --- | --- |
 | Declarations are data | `Convex.Project`, `Convex.Deployment`, `Convex.Component`, `App.make(...)`, and `defineMigrations(...)` describe desired state first. |
 | I/O is Effects | Handlers, deployers, runtime calls, and admin calls return `Effect`, not ad hoc `Promise` helpers. |
-| Boundaries decode with Effect Schema | DSL args/returns/errors, runtime envelopes, deployment API responses, and generated manifests are all schema-decoded before user code trusts them. |
+| Boundaries decode with Effect Schema | DSL args/returns/errors, runtime envelopes, deployment API responses, generated manifests, and persisted deployer state are all schema-decoded before user code trusts them. |
 | Failures are typed | Domain failures use `Schema.TaggedErrorClass`; Convex transport failures become `Convex.FunctionError`, `Convex.HttpError`, or `Convex.ProtocolError`. |
 | Dependencies are Layers | `Convex.providers()`, promoted component `.layer(...)` helpers, and runtime services such as `DatabaseReader` or `ConvexClient` all compose through `Layer`. |
 
@@ -275,6 +278,7 @@ Use the guides for implementation-facing design details:
 [Convex Plain](/convex/guides/quickstart),
 [the recommended app quickstart](/convex/guides/app-quickstart),
 [Alchemy Convex Runtime](/convex/guides/runtime-experimental),
+[runtime internals](/convex/guides/runtime-internals),
 [Confect migration](/convex/guides/migrating-from-confect),
 [migrations](/convex/guides/migrations),
 [auth](/convex/guides/auth),
@@ -308,7 +312,8 @@ the four package-mode
 surfaces, `defineComponentUse(...)`, promoted
 `*.layer(...)` / `*.install(...)` wrappers,
 `defineMigrations(...)`,
-`TestConvex.layer(...)`, `ConvexRuntimeTransport`, typed
+`TestConvex.layer(...)`, `TestConvex.fromFiles(...)`,
+`ConvexRuntimeTransport`, typed
 `Convex.FunctionError` / `Convex.HttpError` classification, and the raw-clock
 ESLint guardrail exist in source.
 The auth resources currently model declaration metadata for generated files,

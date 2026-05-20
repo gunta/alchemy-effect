@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import {
   ActionRunner,
@@ -64,7 +65,8 @@ describe("@alchemy/convex/server", () => {
 
   it("provides mutation writers and mutation runner services", async () => {
     const writes: Array<readonly [string, unknown]> = [];
-    const scheduled: Array<readonly [string, unknown, unknown]> = [];
+    const changes: Array<readonly [string, unknown, unknown?]> = [];
+    const scheduled: Array<readonly [string, unknown, unknown?]> = [];
     const ctx = {
       deployment: "dev",
     };
@@ -73,11 +75,21 @@ describe("@alchemy/convex/server", () => {
       db: {
         query: (table: string) => ({
           collect: () => [{ table }],
+          first: () => ({ table, first: true }),
         }),
         get: (id: string) => ({ id }),
         insert: (table: string, doc: unknown) => {
           writes.push([table, doc]);
           return `${table}_id`;
+        },
+        patch: (id: unknown, value: unknown) => {
+          changes.push(["patch", id, value]);
+        },
+        replace: (id: unknown, value: unknown) => {
+          changes.push(["replace", id, value]);
+        },
+        delete: (id: unknown) => {
+          changes.push(["delete", id]);
         },
       },
       runMutation: (ref: string, args: unknown) => ({ ref, args }),
@@ -85,6 +97,9 @@ describe("@alchemy/convex/server", () => {
         runAfter: (delayMs: number, ref: unknown, args: unknown) => {
           scheduled.push(["after", ref, args]);
           return `job_${delayMs}`;
+        },
+        cancel: (id: unknown) => {
+          scheduled.push(["cancel", id]);
         },
       },
     });
@@ -95,8 +110,13 @@ describe("@alchemy/convex/server", () => {
         const mutations = yield* MutationRunner;
         const scheduler = yield* Scheduler;
         const mutationCtx = yield* MutationCtx;
+        yield* db.table("notes").patch("note_1", { text: "updated" });
+        yield* db.table("notes").replace("note_2", { text: "replaced" });
+        yield* db.table("notes").delete("note_3");
+        yield* scheduler.cancel("job_1");
         return {
           id: yield* db.table("notes").insert({ text: "hello" }),
+          first: yield* db.table("notes").first(),
           nested: yield* mutations.notes.create({ text: "hello" }),
           job: yield* scheduler.runAfter(1000, "notes:create", {
             text: "later",
@@ -113,12 +133,21 @@ describe("@alchemy/convex/server", () => {
 
     expect(result).toEqual({
       id: "notes_id",
+      first: { table: "notes", first: true },
       nested: { ref: "notes:create", args: { text: "hello" } },
       job: "job_1000",
       deployment: "dev",
     });
     expect(writes).toEqual([["notes", { text: "hello" }]]);
-    expect(scheduled).toEqual([["after", "notes:create", { text: "later" }]]);
+    expect(changes).toEqual([
+      ["patch", "note_1", { text: "updated" }],
+      ["replace", "note_2", { text: "replaced" }],
+      ["delete", "note_3"],
+    ]);
+    expect(scheduled).toEqual([
+      ["cancel", "job_1"],
+      ["after", "notes:create", { text: "later" }],
+    ]);
   });
 
   it("provides action runners, scheduler, storage writer, and raw context", async () => {
@@ -263,6 +292,90 @@ describe("@alchemy/convex/server", () => {
     if (authExit._tag === "Failure") {
       expect(String(authExit.cause)).toContain("ConvexRuntimeUnavailable");
       expect(String(authExit.cause)).toContain("auth.getUserIdentity");
+    }
+  });
+
+  it("requires signed-in users and fails null identities with a typed auth error", async () => {
+    const signedIn = await Effect.runPromise(
+      Effect.gen(function* () {
+        const auth = yield* Auth;
+        return yield* auth.requireSignedIn();
+      }).pipe(
+        Effect.provide(
+          runtimeLayerForQuery({
+            db: {
+              query: (table: string) => ({
+                collect: () => [{ table }],
+              }),
+            },
+            auth: {
+              getUserIdentity: () => ({ subject: "user_123" }),
+            },
+          }),
+        ),
+      ),
+    );
+
+    expect(signedIn).toEqual({ subject: "user_123" });
+
+    const unauthenticated = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const auth = yield* Auth;
+        return yield* auth.requireSignedIn();
+      }).pipe(
+        Effect.provide(
+          runtimeLayerForQuery({
+            db: {
+              query: (table: string) => ({
+                collect: () => [{ table }],
+              }),
+            },
+            auth: {
+              getUserIdentity: () => null,
+            },
+          }),
+        ),
+      ),
+    );
+
+    expect(unauthenticated._tag).toBe("Failure");
+    if (unauthenticated._tag === "Failure") {
+      expect(String(unauthenticated.cause)).toContain("ConvexUnauthenticated");
+      expect(String(unauthenticated.cause)).toContain(
+        "Expected an authenticated Convex user.",
+      );
+    }
+  });
+
+  it("wraps thrown Convex adapter calls as typed runtime call failures", async () => {
+    const result = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const db = yield* DatabaseReader;
+        return yield* db.table("notes").collect();
+      }).pipe(
+        Effect.provide(
+          runtimeLayerForQuery({
+            db: {
+              query: () => ({
+                collect: () => {
+                  throw new Error("database went away");
+                },
+              }),
+            },
+          }),
+        ),
+      ),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      const failure = result.cause.reasons.find(Cause.isFailReason);
+      expect(failure?.error).toMatchObject({
+        _tag: "ConvexRuntimeCallFailed",
+        service: "db.query",
+        method: "collect",
+        message: "database went away",
+      });
     }
   });
 });

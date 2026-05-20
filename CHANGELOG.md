@@ -1,3 +1,15 @@
+## Unreleased
+
+### &nbsp;&nbsp;&nbsp;🚀 Features
+
+- **Convex**:
+  - Harden the experimental runtime deployer against Convex CLI deploy2 drift with request-capture parity tests, strict persisted-state schemas, incremental module-hash reuse, local backend lifecycle coverage, and source-map/node dependency inference checks.
+  - Document the experimental runtime deployer's internals, including virtual bundling, deploy2 endpoint sequencing, dry-run behavior, persisted state trust rules, and incremental module-hash reuse.
+  - Expand the Effect-first Convex DSL with tested promoted component runtime clients, metadata-only `TestConvex.fromFiles(...)`, richer literal validator codegen, HTTP adapter coverage, server service error boundaries, and safer migration history validation.
+  - Strengthen `@alchemy/convex-files` and `@alchemy/convex-confect` deployer boundaries with invalid-source checks, typed failure preservation, generated-file ownership behavior, and high-level `Convex.App` wrapper coverage.
+
+---
+
 ## v2.0.0-beta.40
 
 ### &nbsp;&nbsp;&nbsp;🚀 Features

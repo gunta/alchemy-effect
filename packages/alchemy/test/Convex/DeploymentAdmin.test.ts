@@ -55,6 +55,45 @@ const harness = (response: Response) => {
   return { layer, get: () => captured! };
 };
 
+const sequenceHarness = (responses: ReadonlyArray<Response>) => {
+  const captured: Captured[] = [];
+  let index = 0;
+  const client = HttpClient.make((request) =>
+    Effect.sync(() => {
+      const body = request.body as HttpBody.HttpBody;
+      const bodyText =
+        body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : "";
+      captured.push({
+        url: request.url,
+        method: request.method,
+        authorization: request.headers.authorization,
+        contentType: body._tag === "Uint8Array" ? body.contentType : undefined,
+        bodyJson: bodyText ? JSON.parse(bodyText) : undefined,
+      });
+      const response = responses[index++];
+      if (!response) throw new Error(`missing response ${index}`);
+      return HttpClientResponse.fromWeb(request, response);
+    }),
+  );
+
+  const layer = DeploymentAdminLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HttpClient.HttpClient, client),
+        Layer.succeed(ConvexEnvironment, {
+          mode: "oauth" as const,
+          token: Redacted.make("oauth-token-123"),
+          managementApiUrl: "https://api.convex.dev/v1",
+          dashboardApiUrl: "https://api.convex.dev/api",
+          source: { type: "env" as const, details: "CONVEX_OAUTH_TOKEN" },
+        }),
+      ),
+    ),
+  );
+
+  return { layer, captured };
+};
+
 const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
     status: 200,
@@ -93,6 +132,83 @@ describe("Convex DeploymentAdmin", () => {
         authorization: "Convex deploy-key-123",
       });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("authenticates self-hosted deployment admin calls", () => {
+    let captured: Captured | undefined;
+    const client = HttpClient.make((request) =>
+      Effect.sync(() => {
+        captured = {
+          url: request.url,
+          method: request.method,
+          authorization: request.headers.authorization,
+          contentType: undefined,
+          bodyJson: undefined,
+        };
+        return HttpClientResponse.fromWeb(
+          request,
+          jsonResponse({ kind: "selfHosted" }),
+        );
+      }),
+    );
+    const layer = DeploymentAdminLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(HttpClient.HttpClient, client),
+          Layer.succeed(ConvexEnvironment, {
+            mode: "self-hosted" as const,
+            managementApiUrl: "https://convex.example.com",
+            adminKey: Redacted.make("admin-key"),
+            source: {
+              type: "env" as const,
+              details: "CONVEX_SELF_HOSTED_ADMIN_KEY",
+            },
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const admin = yield* DeploymentAdmin;
+      const info = yield* admin.getDeploymentInfo({
+        deploymentUrl: "https://convex.example.com",
+      });
+
+      expect(info.kind).toBe("selfHosted");
+      expect(captured).toMatchObject({
+        authorization: "Convex admin-key",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails deployment admin construction without a token", () => {
+    const layer = DeploymentAdminLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("unused")),
+          ),
+          Layer.succeed(ConvexEnvironment, {
+            mode: "self-hosted" as const,
+            managementApiUrl: "https://convex.example.com",
+            adminKey: undefined as never,
+            source: {
+              type: "env" as const,
+              details: "CONVEX_SELF_HOSTED_ADMIN_KEY",
+            },
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const failure = yield* Effect.gen(function* () {
+        yield* DeploymentAdmin;
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(failure._tag).toBe("Convex.CredentialsError");
+    });
   });
 
   it.effect(
@@ -248,6 +364,72 @@ describe("Convex DeploymentAdmin", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("covers mutating deployment admin endpoints", () => {
+    const stream = {
+      id: "ls/123",
+      logStreamType: "webhook" as const,
+      url: "https://logs.example.com",
+      format: "json" as const,
+      status: { type: "active" as const },
+    };
+    const { layer, captured } = sequenceHarness([
+      jsonResponse(stream),
+      jsonResponse({ hmacSecret: "rotated-secret" }),
+      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ importId: "import_123", state: "requested" }),
+      new Response(null, { status: 204 }),
+    ]);
+
+    return Effect.gen(function* () {
+      const admin = yield* DeploymentAdmin;
+      const created = yield* admin.createLogStream({
+        deploymentUrl: "https://calm-cat-123.convex.cloud/",
+        config: {
+          logStreamType: "webhook",
+          url: "https://logs.example.com",
+          format: "json",
+        },
+      });
+      const secret = yield* admin.rotateWebhookLogStreamSecret({
+        deploymentUrl: "https://calm-cat-123.convex.cloud/",
+        id: "ls/123",
+      });
+      yield* admin.deleteLogStream({
+        deploymentUrl: "https://calm-cat-123.convex.cloud/",
+        id: "ls/123",
+      });
+      yield* admin.unpauseDeployment({
+        deploymentUrl: "https://calm-cat-123.convex.cloud/",
+      });
+      const imported = yield* admin.requestSnapshotImport({
+        deploymentUrl: "https://calm-cat-123.convex.cloud/",
+        source: { url: "https://snapshots.example.com/snapshot.zip" },
+        mode: "replace",
+        table: "messages",
+      });
+      yield* admin.updateEnvironmentVariables({
+        deploymentUrl: "https://calm-cat-123.convex.cloud/",
+        changes: [{ name: "OPENAI_API_KEY", value: null }],
+      });
+
+      expect(created.id).toBe("ls/123");
+      expect(secret.hmacSecret).toBe("rotated-secret");
+      expect(imported).toEqual({ importId: "import_123", state: "requested" });
+      expect(captured.map((call) => call.url)).toEqual([
+        "https://calm-cat-123.convex.cloud/api/v1/create_log_stream",
+        "https://calm-cat-123.convex.cloud/api/v1/rotate_webhook_secret/ls%2F123",
+        "https://calm-cat-123.convex.cloud/api/v1/delete_log_stream/ls%2F123",
+        "https://calm-cat-123.convex.cloud/api/v1/unpause_deployment",
+        "https://calm-cat-123.convex.cloud/api/v1/request_snapshot_import",
+        "https://calm-cat-123.convex.cloud/api/v1/update_environment_variables",
+      ]);
+      expect(captured.at(-1)).toMatchObject({
+        bodyJson: { changes: [{ name: "OPENAI_API_KEY", value: null }] },
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("preserves structured deployment API error bodies", () => {
     const { layer } = harness(
       jsonResponse(
@@ -282,6 +464,61 @@ describe("Convex DeploymentAdmin", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "maps invalid deployment API responses to typed HTTP errors",
+    () => {
+      const { layer } = harness(jsonResponse({ invalid: true }));
+
+      return Effect.gen(function* () {
+        const admin = yield* DeploymentAdmin;
+        const failure = yield* admin
+          .getDeploymentInfo({
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+          })
+          .pipe(Effect.flip);
+
+        expect(failure._tag).toBe("Convex.HttpError");
+        expect(failure.status).toBe(0);
+        expect(failure.body).toContain("invalid response body");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "maps deployment API transport failures to typed HTTP errors",
+    () => {
+      const layer = DeploymentAdminLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.fail(new Error("network down"))),
+            ),
+            Layer.succeed(ConvexEnvironment, {
+              mode: "deploy-key" as const,
+              deployKey: Redacted.make("deploy-key-123"),
+              deploymentUrl: "https://calm-cat-123.convex.cloud",
+              source: { type: "env" as const, details: "CONVEX_DEPLOY_KEY" },
+            }),
+          ),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const admin = yield* DeploymentAdmin;
+        const failure = yield* admin
+          .getDeploymentInfo({
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+          })
+          .pipe(Effect.flip);
+
+        expect(failure._tag).toBe("Convex.HttpError");
+        expect(failure.status).toBe(0);
+        expect(failure.body).toContain("network down");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("posts pause and snapshot admin commands", () => {
     const { layer, get } = harness(

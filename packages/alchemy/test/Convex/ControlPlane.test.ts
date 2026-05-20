@@ -545,6 +545,213 @@ describe("Convex control plane resources", () => {
     }).pipe(Effect.provide(layer({ management })));
   });
 
+  it.effect("reads and diffs key resources from observed metadata", () => {
+    const calls: Array<readonly [string, unknown]> = [];
+    const management = managementApi({
+      listDeployKeys: (input) => {
+        calls.push(["listDeployKeys", input]);
+        return Effect.succeed([
+          {
+            name: "ci",
+            creationTime: 1779150000004,
+            expiresAt: null,
+            lastUsedTime: 1779150001000,
+            creator: 42,
+          },
+        ]);
+      },
+      deleteDeployKey: (input) => {
+        calls.push(["deleteDeployKey", input]);
+        return Effect.fail({
+          _tag: "Convex.NotFound" as const,
+          method: "DELETE",
+          url: "test://deploy-key",
+          status: 404,
+        });
+      },
+      listPersonalAccessTokens: (input) => {
+        calls.push(["listPersonalAccessTokens", input]);
+        return Effect.succeed({
+          items: [
+            {
+              name: "alchemy-automation",
+              creationTime: 1779150000005,
+              expiresAt: null,
+              lastUsedTime: 1779150001000,
+              ssoTeamId: "team-123",
+            },
+          ],
+        });
+      },
+    });
+
+    return Effect.gen(function* () {
+      const deployKey = yield* DeployKey.Provider;
+      const pat = yield* PersonalAccessToken.Provider;
+      const deployAttrs = yield* deployKey.read!({
+        id: "CiKey",
+        instanceId: "i",
+        olds: { deployment, name: "ci" },
+        output: {
+          keyId: "ci",
+          name: "ci",
+          deploymentName: "calm-cat-123",
+          value: Redacted.make("deploy-secret"),
+        },
+      });
+      const deployMoveDiff = yield* deployKey.diff!({
+        id: "CiKey",
+        instanceId: "i",
+        olds: { deployment, name: "ci" },
+        news: { deployment: "other-deployment", name: "ci" },
+        oldBindings: [],
+        newBindings: [],
+        output: deployAttrs!,
+      });
+      const deployNameDiff = yield* deployKey.diff!({
+        id: "CiKey",
+        instanceId: "i",
+        olds: { deployment, name: "ci" },
+        news: { deployment, name: "github" },
+        oldBindings: [],
+        newBindings: [],
+        output: deployAttrs!,
+      });
+      const deployExpiryDiff = yield* deployKey.diff!({
+        id: "CiKey",
+        instanceId: "i",
+        olds: { deployment, name: "ci" },
+        news: { deployment, name: "ci", expiresAt: 1779236400000 },
+        oldBindings: [],
+        newBindings: [],
+        output: deployAttrs!,
+      });
+      const deployStableDiff = yield* deployKey.diff!({
+        id: "CiKey",
+        instanceId: "i",
+        olds: { deployment, name: "ci" },
+        news: { deployment, name: "ci" },
+        oldBindings: [],
+        newBindings: [],
+        output: deployAttrs!,
+      });
+      const patMissingOlds = yield* pat.read!({
+        id: "AutomationToken",
+        instanceId: "i",
+        olds: undefined,
+        output: undefined,
+      });
+      const patAttrs = yield* pat.read!({
+        id: "AutomationToken",
+        instanceId: "i",
+        olds: { name: "alchemy-automation" },
+        output: {
+          tokenId: "alchemy-automation",
+          name: "alchemy-automation",
+          value: Redacted.make("pat-secret"),
+        },
+      });
+      const patNameDiff = yield* pat.diff!({
+        id: "AutomationToken",
+        instanceId: "i",
+        olds: { name: "alchemy-automation" },
+        news: { name: "other-token" },
+        oldBindings: [],
+        newBindings: [],
+        output: patAttrs!,
+      });
+      const patExpiryDiff = yield* pat.diff!({
+        id: "AutomationToken",
+        instanceId: "i",
+        olds: { name: "alchemy-automation" },
+        news: { name: "alchemy-automation", expiresAt: 1779236400000 },
+        oldBindings: [],
+        newBindings: [],
+        output: patAttrs!,
+      });
+      const patStableDiff = yield* pat.diff!({
+        id: "AutomationToken",
+        instanceId: "i",
+        olds: { name: "alchemy-automation" },
+        news: { name: "alchemy-automation" },
+        oldBindings: [],
+        newBindings: [],
+        output: patAttrs!,
+      });
+
+      yield* deployKey.delete({
+        id: "CiKey",
+        instanceId: "i",
+        olds: { deployment, name: "ci" },
+        output: deployAttrs!,
+        session,
+        bindings: [],
+      });
+
+      expect(Redacted.value(deployAttrs!.value!)).toBe("deploy-secret");
+      expect(deployAttrs).toMatchObject({
+        keyId: "ci",
+        creationTime: 1779150000004,
+        lastUsedTime: 1779150001000,
+        creator: 42,
+      });
+      expect(deployMoveDiff).toEqual({ action: "replace" });
+      expect(deployNameDiff).toEqual({ action: "replace" });
+      expect(deployExpiryDiff).toEqual({ action: "replace" });
+      expect(deployStableDiff).toBeUndefined();
+      expect(patMissingOlds).toBeUndefined();
+      expect(Redacted.value(patAttrs!.value!)).toBe("pat-secret");
+      expect(patAttrs).toMatchObject({
+        tokenId: "alchemy-automation",
+        creationTime: 1779150000005,
+        lastUsedTime: 1779150001000,
+        ssoTeamId: "team-123",
+      });
+      expect(patNameDiff).toEqual({ action: "replace" });
+      expect(patExpiryDiff).toEqual({ action: "replace" });
+      expect(patStableDiff).toBeUndefined();
+      expect(calls.at(-1)).toEqual([
+        "deleteDeployKey",
+        { deploymentName: "calm-cat-123", name: "ci" },
+      ]);
+    }).pipe(Effect.provide(layer({ management })));
+  });
+
+  it.effect(
+    "deletes missing key resource state idempotently before API calls",
+    () => {
+      const calls: Array<readonly [string, unknown]> = [];
+      const management = managementApi({
+        deleteDeployKey: (input) => {
+          calls.push(["deleteDeployKey", input]);
+          return Effect.void;
+        },
+        deletePersonalAccessToken: (input) => {
+          calls.push(["deletePersonalAccessToken", input]);
+          return Effect.void;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const deployKey = yield* DeployKey.Provider;
+        const pat = yield* PersonalAccessToken.Provider;
+
+        const deleteInput = {
+          instanceId: "i",
+          olds: undefined,
+          output: undefined as never,
+          session,
+          bindings: [],
+        };
+
+        yield* deployKey.delete({ ...deleteInput, id: "MissingDeployKey" });
+        yield* pat.delete({ ...deleteInput, id: "MissingPat" });
+
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer({ management })));
+    },
+  );
+
   it.effect("writes deployment env vars without persisting the value", () => {
     const calls: Array<readonly [string, unknown]> = [];
     const admin = adminApi({
@@ -584,6 +791,149 @@ describe("Convex control plane resources", () => {
       ]);
     }).pipe(Effect.provide(layer({ admin })));
   });
+
+  it.effect(
+    "reads diffs and deletes deployment env vars from observed state",
+    () => {
+      const calls: Array<readonly [string, unknown]> = [];
+      let envVars: ReadonlyArray<{
+        readonly name: string;
+        readonly value: string;
+      }> = [{ name: "OPENAI_API_KEY", value: "observed-secret" }];
+      const admin = adminApi({
+        listEnvironmentVariables: (input) => {
+          calls.push(["listEnvironmentVariables", input]);
+          return Effect.succeed(envVars);
+        },
+        updateEnvironmentVariables: (input) => {
+          calls.push(["updateEnvironmentVariables", input]);
+          return Effect.void;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const provider = yield* EnvironmentVariable.Provider;
+        const props = {
+          deployment,
+          name: "OPENAI_API_KEY",
+          value: Redacted.make("desired-secret"),
+        };
+        const output = {
+          name: "OPENAI_API_KEY",
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          valueHash: "sha256:previous",
+        };
+
+        expect(
+          yield* provider.read!({
+            id: "OpenAIKey",
+            instanceId: "i",
+            olds: undefined,
+            output,
+          }),
+        ).toBe(output);
+
+        const observed = yield* provider.read!({
+          id: "OpenAIKey",
+          instanceId: "i",
+          olds: props,
+          output,
+        });
+        expect(observed).toMatchObject({
+          name: "OPENAI_API_KEY",
+          deploymentName: "calm-cat-123",
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+        });
+        expect(observed?.valueHash).toMatch(/^sha256:/);
+        expect(JSON.stringify(observed)).not.toContain("observed-secret");
+
+        envVars = [];
+        expect(
+          yield* provider.read!({
+            id: "OpenAIKey",
+            instanceId: "i",
+            olds: props,
+            output,
+          }),
+        ).toBeUndefined();
+
+        expect(
+          yield* provider.diff!({
+            id: "OpenAIKey",
+            instanceId: "i",
+            olds: props,
+            news: props,
+            oldBindings: [],
+            newBindings: [],
+            output,
+          }),
+        ).toBeUndefined();
+        expect(
+          yield* provider.diff!({
+            id: "OpenAIKey",
+            instanceId: "i",
+            olds: props,
+            news: {
+              ...props,
+              deployment: {
+                ...deployment,
+                deploymentName: "brisk-fox-456",
+                deploymentUrl: "https://brisk-fox-456.convex.cloud",
+              },
+            },
+            oldBindings: [],
+            newBindings: [],
+            output,
+          }),
+        ).toEqual({ action: "replace" });
+
+        yield* provider.delete({
+          id: "OpenAIKey",
+          instanceId: "i",
+          olds: props,
+          output,
+          session,
+          bindings: [],
+        });
+        expect(calls.at(-1)).toEqual([
+          "updateEnvironmentVariables",
+          {
+            deploymentUrl: "https://calm-cat-123.convex.cloud",
+            changes: [{ name: "OPENAI_API_KEY", value: null }],
+          },
+        ]);
+      }).pipe(Effect.provide(layer({ admin })));
+    },
+  );
+
+  it.effect(
+    "deletes missing deployment env var state idempotently before admin calls",
+    () => {
+      const calls: Array<readonly [string, unknown]> = [];
+      const admin = adminApi({
+        updateEnvironmentVariables: (input) => {
+          calls.push(["updateEnvironmentVariables", input]);
+          return Effect.void;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const provider = yield* EnvironmentVariable.Provider;
+
+        yield* provider.delete({
+          id: "MissingOpenAIKey",
+          instanceId: "i",
+          olds: undefined,
+          output: undefined as never,
+          session,
+          bindings: [],
+        });
+
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer({ admin })));
+    },
+  );
 
   it.effect("syncs deployment canonical URLs and unsets them on delete", () => {
     const calls: Array<readonly [string, unknown]> = [];
@@ -655,6 +1005,156 @@ describe("Convex control plane resources", () => {
     }).pipe(Effect.provide(layer({ admin })));
   });
 
+  it.effect("reads diffs and clears canonical URLs from observed state", () => {
+    const calls: Array<readonly [string, unknown]> = [];
+    let urls = {
+      convexCloudUrl: "https://calm-cat-123.convex.cloud",
+      convexSiteUrl: "https://calm-cat-123.convex.site",
+    };
+    const admin = adminApi({
+      getCanonicalUrls: (input) => {
+        calls.push(["getCanonicalUrls", input]);
+        return Effect.succeed(urls);
+      },
+      updateCanonicalUrl: (input) => {
+        calls.push(["updateCanonicalUrl", input]);
+        if (input.requestDestination === "convexSite") {
+          urls = {
+            ...urls,
+            convexSiteUrl: input.url ?? "https://calm-cat-123.convex.site",
+          };
+        }
+        return Effect.void;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const provider = yield* CanonicalUrl.Provider;
+      const props = {
+        deployment,
+        requestDestination: "convexSite" as const,
+        url: null,
+      };
+      const output = {
+        deploymentName: "calm-cat-123",
+        deploymentUrl: "https://calm-cat-123.convex.cloud",
+        requestDestination: "convexSite" as const,
+        url: "https://custom-site.example.com",
+      };
+
+      expect(
+        yield* provider.read!({
+          id: "CanonicalSiteUrl",
+          instanceId: "i",
+          olds: undefined,
+          output,
+        }),
+      ).toBe(output);
+      expect(
+        yield* provider.read!({
+          id: "CanonicalSiteUrl",
+          instanceId: "i",
+          olds: props,
+          output,
+        }),
+      ).toEqual({
+        deploymentName: "calm-cat-123",
+        deploymentUrl: "https://calm-cat-123.convex.cloud",
+        requestDestination: "convexSite",
+        url: "https://calm-cat-123.convex.site",
+      });
+
+      expect(
+        yield* provider.diff!({
+          id: "CanonicalSiteUrl",
+          instanceId: "i",
+          olds: props,
+          news: props,
+          oldBindings: [],
+          newBindings: [],
+          output,
+        }),
+      ).toBeUndefined();
+      expect(
+        yield* provider.diff!({
+          id: "CanonicalSiteUrl",
+          instanceId: "i",
+          olds: props,
+          news: { ...props, requestDestination: "convexCloud" },
+          oldBindings: [],
+          newBindings: [],
+          output,
+        }),
+      ).toEqual({ action: "replace" });
+      expect(
+        yield* provider.diff!({
+          id: "CanonicalSiteUrl",
+          instanceId: "i",
+          olds: props,
+          news: {
+            ...props,
+            deployment: {
+              ...deployment,
+              deploymentName: "brisk-fox-456",
+              deploymentUrl: "https://brisk-fox-456.convex.cloud",
+            },
+          },
+          oldBindings: [],
+          newBindings: [],
+          output,
+        }),
+      ).toEqual({ action: "replace" });
+
+      const attrs = yield* provider.reconcile({
+        id: "CanonicalSiteUrl",
+        instanceId: "i",
+        news: props,
+        olds: undefined,
+        output: undefined,
+        session,
+        bindings: [],
+      });
+
+      expect(attrs.url).toBe("https://calm-cat-123.convex.site");
+      expect(calls).toContainEqual([
+        "updateCanonicalUrl",
+        {
+          deploymentUrl: "https://calm-cat-123.convex.cloud",
+          requestDestination: "convexSite",
+          url: null,
+        },
+      ]);
+    }).pipe(Effect.provide(layer({ admin })));
+  });
+
+  it.effect(
+    "deletes missing canonical URL state idempotently before admin calls",
+    () => {
+      const calls: Array<readonly [string, unknown]> = [];
+      const admin = adminApi({
+        updateCanonicalUrl: (input) => {
+          calls.push(["updateCanonicalUrl", input]);
+          return Effect.void;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const provider = yield* CanonicalUrl.Provider;
+
+        yield* provider.delete({
+          id: "MissingCanonicalUrl",
+          instanceId: "i",
+          olds: undefined,
+          output: undefined as never,
+          session,
+          bindings: [],
+        });
+
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer({ admin })));
+    },
+  );
+
   it.effect(
     "writes project default env vars through the Management API",
     () => {
@@ -704,6 +1204,189 @@ describe("Convex control plane resources", () => {
             },
           ],
         ]);
+      }).pipe(Effect.provide(layer({ management })));
+    },
+  );
+
+  it.effect(
+    "reads diffs and deletes project default env vars from observed state",
+    () => {
+      const calls: Array<readonly [string, unknown]> = [];
+      let envVars: ReadonlyArray<{
+        readonly name: string;
+        readonly value: string;
+      }> = [{ name: "DEFAULT_KEY", value: "observed-secret" }];
+      const management = managementApi({
+        listDefaultEnvironmentVariables: (input) => {
+          calls.push(["listDefaultEnvironmentVariables", input]);
+          return Effect.succeed({ items: envVars });
+        },
+        updateDefaultEnvironmentVariables: (input) => {
+          calls.push(["updateDefaultEnvironmentVariables", input]);
+          return Effect.void;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const provider = yield* ProjectEnvVar.Provider;
+        const props = {
+          project: {
+            projectId: "project-123",
+            slug: "my-app",
+            name: "My App",
+          },
+          deploymentType: "prod" as const,
+          name: "DEFAULT_KEY",
+          value: Redacted.make("desired-secret"),
+        };
+        const output = {
+          projectId: "project-123",
+          deploymentType: "prod" as const,
+          name: "DEFAULT_KEY",
+          valueHash: "sha256:previous",
+        };
+
+        expect(
+          yield* provider.read!({
+            id: "DefaultKey",
+            instanceId: "i",
+            olds: undefined,
+            output,
+          }),
+        ).toBe(output);
+
+        const observed = yield* provider.read!({
+          id: "DefaultKey",
+          instanceId: "i",
+          olds: props,
+          output,
+        });
+        expect(observed).toMatchObject({
+          projectId: "project-123",
+          deploymentType: "prod",
+          name: "DEFAULT_KEY",
+        });
+        expect(observed?.valueHash).toMatch(/^sha256:/);
+        expect(JSON.stringify(observed)).not.toContain("observed-secret");
+
+        envVars = [];
+        expect(
+          yield* provider.read!({
+            id: "DefaultKey",
+            instanceId: "i",
+            olds: props,
+            output,
+          }),
+        ).toBeUndefined();
+
+        expect(
+          yield* provider.diff!({
+            id: "DefaultKey",
+            instanceId: "i",
+            olds: props,
+            news: props,
+            oldBindings: [],
+            newBindings: [],
+            output,
+          }),
+        ).toBeUndefined();
+        expect(
+          yield* provider.diff!({
+            id: "DefaultKey",
+            instanceId: "i",
+            olds: props,
+            news: { ...props, deploymentType: "dev" },
+            oldBindings: [],
+            newBindings: [],
+            output,
+          }),
+        ).toEqual({ action: "replace" });
+        expect(
+          yield* provider.diff!({
+            id: "DefaultKey",
+            instanceId: "i",
+            olds: props,
+            news: { ...props, name: "OTHER_KEY" },
+            oldBindings: [],
+            newBindings: [],
+            output,
+          }),
+        ).toEqual({ action: "replace" });
+
+        const attrs = yield* provider.reconcile({
+          id: "DefaultKey",
+          instanceId: "i",
+          news: props,
+          olds: undefined,
+          output: undefined,
+          session,
+          bindings: [],
+        });
+        expect(attrs.valueHash).toMatch(/^sha256:/);
+        expect(JSON.stringify(attrs)).not.toContain("desired-secret");
+        expect(calls.at(-1)).toEqual([
+          "updateDefaultEnvironmentVariables",
+          {
+            projectId: "project-123",
+            changes: [
+              {
+                name: "DEFAULT_KEY",
+                deploymentType: "prod",
+                value: "desired-secret",
+              },
+            ],
+          },
+        ]);
+
+        yield* provider.delete({
+          id: "DefaultKey",
+          instanceId: "i",
+          olds: props,
+          output: attrs,
+          session,
+          bindings: [],
+        });
+        expect(calls.at(-1)).toEqual([
+          "updateDefaultEnvironmentVariables",
+          {
+            projectId: "project-123",
+            changes: [
+              {
+                name: "DEFAULT_KEY",
+                deploymentType: "prod",
+                value: null,
+              },
+            ],
+          },
+        ]);
+      }).pipe(Effect.provide(layer({ management })));
+    },
+  );
+
+  it.effect(
+    "deletes missing project default env var state idempotently before API calls",
+    () => {
+      const calls: Array<readonly [string, unknown]> = [];
+      const management = managementApi({
+        updateDefaultEnvironmentVariables: (input) => {
+          calls.push(["updateDefaultEnvironmentVariables", input]);
+          return Effect.void;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const provider = yield* ProjectEnvVar.Provider;
+
+        yield* provider.delete({
+          id: "MissingDefaultKey",
+          instanceId: "i",
+          olds: undefined,
+          output: undefined as never,
+          session,
+          bindings: [],
+        });
+
+        expect(calls).toEqual([]);
       }).pipe(Effect.provide(layer({ management })));
     },
   );
@@ -869,7 +1552,7 @@ describe("Convex control plane resources", () => {
           .pipe(Effect.flip);
 
         expect(String(stringDeploymentFailure)).toContain(
-          "Convex.Bundle deployment",
+          "deploymentName and deploymentUrl",
         );
         expect(String(pathDeploymentFailure)).toContain("deploymentUrl");
         expect(calls).toEqual([

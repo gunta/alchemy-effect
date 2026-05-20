@@ -130,6 +130,43 @@ describe("Convex.Component", () => {
     ),
   );
 
+  it.effect("normalizes redacted option values without leaking secrets", () =>
+    withProviders(
+      Effect.gen(function* () {
+        const provider = yield* Component.Provider;
+
+        const attrs = yield* provider.reconcile({
+          id: "secureSearch",
+          instanceId: "i",
+          news: {
+            source: {
+              package: "@convex-dev/rag",
+            },
+            options: {
+              auth: {
+                apiKey: Redacted.make("component-option-secret"),
+                scopes: ["read", Redacted.make("component-scope-secret")],
+              },
+            },
+          },
+          olds: undefined,
+          output: undefined,
+          session,
+          bindings: [],
+        });
+
+        expect(JSON.stringify(attrs)).not.toContain("component-option-secret");
+        expect(JSON.stringify(attrs)).not.toContain("component-scope-secret");
+        expect(attrs.manifest.options).toEqual({
+          auth: {
+            apiKey: { redacted: true },
+            scopes: ["read", { redacted: true }],
+          },
+        });
+      }),
+    ),
+  );
+
   it.effect("reads prior manifest state and deletes idempotently", () =>
     withProviders(
       Effect.gen(function* () {
@@ -235,6 +272,44 @@ describe("Convex.Component", () => {
             .pipe(Effect.flip);
 
           expect(String(error)).toContain("httpPrefix");
+
+          const ambiguousSource = yield* provider
+            .reconcile({
+              id: "rag",
+              instanceId: "i",
+              news: {
+                source: {
+                  package: "@convex-dev/rag",
+                  local: "./components/rag",
+                },
+              } as never,
+              olds: undefined,
+              output: undefined,
+              session,
+              bindings: [],
+            })
+            .pipe(Effect.flip);
+
+          expect(String(ambiguousSource)).toContain("exactly one");
+
+          const packageWithLocalConfig = yield* provider
+            .reconcile({
+              id: "rag",
+              instanceId: "i",
+              news: {
+                source: {
+                  package: "@convex-dev/rag",
+                  configPath: "./components/rag/convex.config.ts",
+                },
+              } as never,
+              olds: undefined,
+              output: undefined,
+              session,
+              bindings: [],
+            })
+            .pipe(Effect.flip);
+
+          expect(String(packageWithLocalConfig)).toContain("configPath");
         }),
       ),
   );

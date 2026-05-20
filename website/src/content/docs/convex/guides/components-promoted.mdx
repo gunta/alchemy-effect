@@ -9,7 +9,9 @@ sidebar:
 > `defineComponentUse(...)` in `@alchemy/convex`, the core
 > `Convex.Component` resource exists, promoted component modules are imported
 > one-by-one from `@alchemy/convex/components/*`, and the metadata catalog
-> is available from `@alchemy/convex/components/catalog`.
+> is available from `@alchemy/convex/components/catalog`. Promoted runtime
+> client layers are injectable in tests and fail through typed Effect
+> errors when a local implementation is missing.
 
 Promoted wrappers exist for the components that become materially better when
 Alchemy adds typed services, generated files, or deploy-time safety. Every
@@ -165,6 +167,25 @@ const auth = Group.make("auth", {
 | Test helpers | `TestConvex.layer(app)` discovers test helper entries from compiled component metadata where possible |
 | IDs across the boundary | Treat component IDs as strings unless the wrapper can prove a safer branded mapping |
 | Runtime methods | Promoted `.layer(options?)` values are Effect Layers with static install metadata attached; missing test or local implementations fail with `Convex.ComponentClientUnavailable`, not a thrown string |
+
+## Runtime client contract
+
+Promoted clients are ordinary Effect services. A wrapper can be used in
+three places without changing shape:
+
+- as install metadata in `App.make({ components })`,
+- as a live app layer that delegates to generated component refs,
+- as a test layer with injected method implementations.
+
+The default local implementation is deliberately strict. If a method is
+not supplied in a test or local layer, the call fails with
+`Convex.ComponentClientUnavailable` and includes the installed component
+name plus method name. That makes missing test doubles actionable while
+still keeping production app code free of hand-rolled mocks.
+
+This contract is covered across the promoted catalog, including nested
+clients such as `NeutralCost.Reader`, `NeutralCost.Recorder`,
+`NeutralCost.Admin`, and Workpool config methods.
 
 ## Commands
 

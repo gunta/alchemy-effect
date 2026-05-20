@@ -103,6 +103,42 @@ const ModuleStringSchema = Schema.String.pipe(
   ),
 );
 
+const schemaIdentityString = (message: string) =>
+  Schema.String.pipe(
+    Schema.refine(
+      (value): value is string =>
+        value.trim().length > 0 &&
+        value === value.trim() &&
+        !/\s/.test(value) &&
+        !hasControlCharacter(value),
+      { message },
+    ),
+  );
+
+const TableNameSchema = schemaIdentityString(
+  "Convex table names must not be blank or contain whitespace or control characters.",
+);
+
+const IndexNameSchema = schemaIdentityString(
+  "Convex index names must not be blank or contain whitespace or control characters.",
+);
+
+const IndexFieldPathSchema = schemaIdentityString(
+  "Convex index fields must not be blank or contain whitespace or control characters.",
+);
+
+const IndexFieldPathListSchema = Schema.Array(IndexFieldPathSchema).pipe(
+  Schema.refine(
+    (fields): fields is ReadonlyArray<string> => fields.length > 0,
+    { message: "Convex index fields must include at least one field." },
+  ),
+  Schema.refine(
+    (fields): fields is ReadonlyArray<string> =>
+      new Set(fields).size === fields.length,
+    { message: "Convex duplicate index fields are not allowed." },
+  ),
+);
+
 const componentImportString = (message: string) =>
   Schema.String.pipe(
     Schema.refine(
@@ -350,22 +386,69 @@ export interface GroupDeclaration<
   readonly functions: Functions;
 }
 
-export const ComponentPackageSourceSchema = Schema.Struct({
-  package: ComponentImportStringSchema,
+export interface ComponentPackageSource {
+  readonly package: string;
+  readonly version?: string;
+  readonly configExport?: string;
+}
+
+export interface ComponentLocalSource {
+  readonly local: string;
+  readonly configPath?: string;
+}
+
+export type ComponentSource = ComponentPackageSource | ComponentLocalSource;
+
+const ComponentSourceShapeSchema = Schema.Struct({
+  package: Schema.optionalKey(ComponentImportStringSchema),
   version: Schema.optionalKey(ComponentImportStringSchema),
   configExport: Schema.optionalKey(ComponentImportStringSchema),
-});
-
-export const ComponentLocalSourceSchema = Schema.Struct({
-  local: ComponentPathStringSchema,
+  local: Schema.optionalKey(ComponentPathStringSchema),
   configPath: Schema.optionalKey(ComponentPathStringSchema),
 });
+
+type ComponentSourceShape = Schema.Schema.Type<
+  typeof ComponentSourceShapeSchema
+>;
+
+export const ComponentPackageSourceSchema = ComponentSourceShapeSchema.pipe(
+  Schema.refine(
+    (source): source is ComponentSourceShape =>
+      source.package !== undefined && source.local === undefined,
+    {
+      message:
+        "Component sources must provide exactly one of package or local.",
+    },
+  ),
+  Schema.refine(
+    (source): source is ComponentSourceShape => source.configPath === undefined,
+    { message: "Component package sources cannot include configPath." },
+  ),
+) as PublicSchema<ComponentPackageSource>;
+
+export const ComponentLocalSourceSchema = ComponentSourceShapeSchema.pipe(
+  Schema.refine(
+    (source): source is ComponentSourceShape =>
+      source.local !== undefined && source.package === undefined,
+    {
+      message:
+        "Component sources must provide exactly one of package or local.",
+    },
+  ),
+  Schema.refine(
+    (source): source is ComponentSourceShape =>
+      source.version === undefined && source.configExport === undefined,
+    {
+      message:
+        "Component local sources cannot include version or configExport.",
+    },
+  ),
+) as PublicSchema<ComponentLocalSource>;
 
 export const ComponentSourceSchema = Schema.Union([
   ComponentPackageSourceSchema,
   ComponentLocalSourceSchema,
-]);
-export type ComponentSource = Schema.Schema.Type<typeof ComponentSourceSchema>;
+]) as PublicSchema<ComponentSource>;
 
 export const ComponentHttpPrefixSchema = Schema.String.pipe(
   Schema.refine(
@@ -472,8 +555,8 @@ export interface AppDeclaration<
 }
 
 export const IndexDeclarationSchema = Schema.Struct({
-  name: Schema.String,
-  fields: Schema.Array(Schema.String),
+  name: IndexNameSchema,
+  fields: IndexFieldPathListSchema,
 });
 
 export const ConvexIdSchemaSchema = EffectSchemaValueSchema.pipe(
@@ -499,7 +582,7 @@ export const ConvexValidatorSourceSchema = Schema.Union([
 
 export const TableDeclarationSchema = Schema.Struct({
   _tag: Schema.Literal("Table"),
-  name: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(TableNameSchema),
   schema: ConvexValidatorSourceSchema,
   indexes: Schema.Array(IndexDeclarationSchema),
   id: ConvexIdSchemaSchema,
@@ -509,10 +592,23 @@ export const TableDeclarationSchema = Schema.Struct({
   index: Schema.instanceOf(Function),
 }).pipe(publicSchema<TableDeclaration>);
 
-export const SchemaDeclarationSchema = Schema.Struct({
+const SchemaDeclarationShapeSchema = Schema.Struct({
   _tag: Schema.Literal("Schema"),
-  tables: Schema.Record(Schema.String, TableDeclarationSchema),
-}) as PublicSchema<SchemaDeclaration>;
+  tables: Schema.Record(TableNameSchema, TableDeclarationSchema),
+});
+
+const hasMatchingTableKeys = (
+  declaration: Schema.Schema.Type<typeof SchemaDeclarationShapeSchema>,
+): declaration is Schema.Schema.Type<typeof SchemaDeclarationShapeSchema> =>
+  Object.entries(declaration.tables).every(
+    ([key, table]) => table.name === undefined || table.name === key,
+  );
+
+export const SchemaDeclarationSchema = SchemaDeclarationShapeSchema.pipe(
+  Schema.refine(hasMatchingTableKeys, {
+    message: "Schema table object keys must match table.name.",
+  }),
+) as PublicSchema<SchemaDeclaration>;
 
 export const FunctionKindSchema = Schema.Literals([
   "query",
@@ -555,7 +651,7 @@ export const ComponentDeclarationSchema = Schema.Union([
   ComponentUseCarrierSchema,
 ]) as PublicSchema<ComponentDeclaration>;
 
-export const AppDeclarationSchema = Schema.Struct({
+const AppDeclarationShapeSchema = Schema.Struct({
   _tag: Schema.Literal("App"),
   module: Schema.optionalKey(Schema.UndefinedOr(ModuleStringSchema)),
   schema: Schema.optionalKey(Schema.UndefinedOr(SchemaDeclarationSchema)),
@@ -567,9 +663,36 @@ export const AppDeclarationSchema = Schema.Struct({
     ),
   ),
   migrations: Schema.optionalKey(Schema.UndefinedOr(MigrationSetSchema)),
-}) as PublicSchema<AppDeclaration>;
+});
+
+const hasMatchingGroupKeys = (
+  app: Schema.Schema.Type<typeof AppDeclarationShapeSchema>,
+): app is Schema.Schema.Type<typeof AppDeclarationShapeSchema> =>
+  Object.entries(app.groups).every(([key, group]) => key === group.name);
+
+export const AppDeclarationSchema = AppDeclarationShapeSchema.pipe(
+  Schema.refine(hasMatchingGroupKeys, {
+    message: "App group object keys must match group.name.",
+  }),
+) as PublicSchema<AppDeclaration>;
 
 export type FileMap = ReadonlyMap<string, string>;
+
+const decodeTableName = <const TableName extends string>(
+  name: TableName,
+): TableName => Schema.decodeUnknownSync(TableNameSchema)(name) as TableName;
+
+const decodeIndexDeclaration = <
+  const IndexName extends string,
+  const Fields extends ReadonlyArray<string>,
+>(
+  name: IndexName,
+  fields: Fields,
+): IndexDeclaration<IndexName, Fields> =>
+  Schema.decodeUnknownSync(IndexDeclarationSchema)({
+    name,
+    fields,
+  }) as IndexDeclaration<IndexName, Fields>;
 
 export const table = <
   const SchemaValue,
@@ -587,7 +710,10 @@ export const table = <
     insert: schema,
     patch: schema,
     index: (name, fields) =>
-      table(schema, [...indexes, { name, fields }] as const),
+      table(schema, [
+        ...indexes,
+        decodeIndexDeclaration(name, fields),
+      ] as const),
   }) as TableDeclaration<SchemaValue, string, Indexes>;
 
 const makeIdSchema = <const TableName extends string>(
@@ -640,23 +766,25 @@ const annotateTable = <
 >(
   name: TableName,
   declaration: TableDeclaration<SchemaValue, string, Indexes>,
-): NamedTableDeclaration<SchemaValue, TableName, Indexes> =>
-  ({
+): NamedTableDeclaration<SchemaValue, TableName, Indexes> => {
+  const tableName = decodeTableName(name);
+  return {
     ...declaration,
-    name,
-    id: makeIdSchema(name),
-    doc: makeDocSchema(name, declaration.schema),
+    name: tableName,
+    id: makeIdSchema(tableName),
+    doc: makeDocSchema(tableName, declaration.schema),
     insert: declaration.schema,
     patch: declaration.schema,
     index: (indexName, fields) =>
       annotateTable(
-        name,
+        tableName,
         table(declaration.schema, [
           ...declaration.indexes,
-          { name: indexName, fields },
+          decodeIndexDeclaration(indexName, fields),
         ] as const),
       ),
-  }) as NamedTableDeclaration<SchemaValue, TableName, Indexes>;
+  } as NamedTableDeclaration<SchemaValue, TableName, Indexes>;
+};
 
 type AnnotatedTables<
   Tables extends Record<string, TableDeclaration<unknown, string>>,
@@ -682,6 +810,7 @@ const makeDatabaseSchema = <
       ]),
     ) as unknown as AnnotatedTables<Tables>,
   };
+  Schema.decodeUnknownSync(SchemaDeclarationSchema)(declaration);
   return {
     ...declaration,
     addTable: (table) =>
@@ -863,15 +992,16 @@ export const defineApp = <
   readonly http?: HttpValue;
   readonly components?: Components;
   readonly migrations?: MigrationSet;
-}): AppDeclaration<Groups, SchemaValue, HttpValue, Components> => ({
-  _tag: "App",
-  module: props.module,
-  schema: props.schema,
-  groups: (props.groups ?? {}) as Groups,
-  http: props.http,
-  components: props.components,
-  migrations: props.migrations,
-});
+}): AppDeclaration<Groups, SchemaValue, HttpValue, Components> =>
+  Schema.decodeUnknownSync(AppDeclarationSchema)({
+    _tag: "App",
+    module: props.module,
+    schema: props.schema,
+    groups: props.groups ?? {},
+    http: props.http,
+    components: props.components,
+    migrations: props.migrations,
+  }) as AppDeclaration<Groups, SchemaValue, HttpValue, Components>;
 
 export namespace App {
   export const make = defineApp;
@@ -948,16 +1078,19 @@ const emitLiteralValidator = (value: unknown): string => {
       : `v.array(${emitLiteralValidator(value[0])})`;
   }
   if (isPlainObject(value)) {
-    return emitObjectValidator(
-      Object.entries(value).map(([name, field]) => ({
-        name,
-        source: emitLiteralValidator(field),
-        optional: false,
-      })),
-    );
+    return `v.object(${emitLiteralObjectFields(value)})`;
   }
   return unsupportedValidator(`literal value ${JSON.stringify(value)}`);
 };
+
+const emitLiteralObjectFields = (value: Record<string, unknown>) =>
+  emitObjectValidator(
+    Object.entries(value).map(([name, field]) => ({
+      name,
+      source: emitLiteralValidator(field),
+      optional: false,
+    })),
+  );
 
 const emitObjectValidator = (
   fields: ReadonlyArray<{
@@ -1025,9 +1158,8 @@ const emitAst = (ast: AST.AST): string => {
       }
       return `v.object(${emitObjectFromAst(ast)})`;
     }
-    case "Union": {
+    case "Union":
       return emitUnionValidator(ast.types);
-    }
     case "Undefined":
     case "Void":
     case "Never":
@@ -1071,7 +1203,9 @@ const emitTable = (declaration: TableDeclaration) =>
       `${source}.index(${JSON.stringify(index.name)}, ${JSON.stringify(index.fields)})`,
     isSchemaLike(declaration.schema) && AST.isObjects(declaration.schema.ast)
       ? `defineTable(${emitObjectFromAst(declaration.schema.ast)})`
-      : `defineTable(${emitConvexValidator(declaration.schema)})`,
+      : isPlainObject(declaration.schema)
+        ? `defineTable(${emitLiteralObjectFields(declaration.schema)})`
+        : `defineTable(${emitConvexValidator(declaration.schema)})`,
   );
 
 const emitSchema = (schema: SchemaDeclaration | undefined) => {
@@ -1152,9 +1286,8 @@ const importSpecifierForModule = (specifier: string, appModule?: string) => {
   if (appModule.startsWith("file://")) {
     return fileUrlPath(new URL(specifier, appModule).href);
   }
-  if (appModule.startsWith("/")) {
+  if (appModule.startsWith("/"))
     return normalizeSegments(`${dirname(appModule)}/${specifier}`);
-  }
   return specifier;
 };
 
@@ -1479,16 +1612,9 @@ export const compileApp = (input: AppDeclaration): FileMap => {
   const files = new Map<string, string>();
   files.set("convex/_alchemy/runtime.ts", emitRuntime());
   files.set("convex/_alchemy/schema.ts", emitSchema(app.schema));
-  const groups = Object.entries(app.groups)
-    .map(([key, group]) => {
-      if (key !== group.name) {
-        throw new Error(
-          `Group key ${JSON.stringify(key)} must match group.name ${JSON.stringify(group.name)}.`,
-        );
-      }
-      return group;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const groups = Object.values(app.groups).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
   if (groups.some((group) => Object.keys(group.functions).length > 0)) {
     if (!app.module) {
       throw new Error(

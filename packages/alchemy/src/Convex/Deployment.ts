@@ -82,18 +82,19 @@ export interface Deployment extends Resource<
 export const Deployment = Resource<Deployment>("Convex.Deployment");
 
 const makeOrigin = (deploymentUrl: string) =>
-  Effect.try({
-    try: () => {
+  Effect.sync(() => {
+    try {
       const url = new URL(deploymentUrl);
       return {
         url: deploymentUrl,
         hostname: url.hostname,
       };
-    },
-    catch: () => ({
-      url: deploymentUrl,
-      hostname: deploymentUrl.replace(/^https?:\/\//, "").split("/")[0] ?? "",
-    }),
+    } catch {
+      return {
+        url: deploymentUrl,
+        hostname: deploymentUrl.replace(/^https?:\/\//, "").split("/")[0] ?? "",
+      };
+    }
   });
 
 export const DeploymentProvider = () =>
@@ -265,6 +266,7 @@ export const DeploymentProvider = () =>
             return current;
           }),
           delete: Effect.fn("Convex.Deployment.delete")(function* ({ output }) {
+            if (!output) return;
             yield* api
               .deleteDeployment({ deploymentName: output.deploymentName })
               .pipe(Effect.catchTag("Convex.NotFound", () => Effect.void));

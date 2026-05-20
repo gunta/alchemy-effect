@@ -14,6 +14,7 @@ import {
   WorkOS,
   WorkOSProvider,
 } from "@/Convex/Auth";
+import { buildAuthAttributes } from "@/Convex/Auth/Shared";
 import { Auth } from "@/Convex";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -106,6 +107,19 @@ describe("Convex.Auth resources", () => {
           session,
           bindings: [],
         });
+        const workosWithoutEnvAttrs = yield* workos.reconcile({
+          id: "WorkOSWithoutEnv",
+          instanceId: "i",
+          news: {
+            issuer: "https://auth.workos.com/user_management/example",
+            applicationID: "convex",
+            provisionEnvironment: false,
+          },
+          olds: undefined,
+          output: undefined,
+          session,
+          bindings: [],
+        });
         const customAttrs = yield* custom.reconcile({
           id: "Custom",
           instanceId: "i",
@@ -144,6 +158,7 @@ describe("Convex.Auth resources", () => {
               "sha256:c79d056bad9a02dca60783e372f658348e3c4c895c8d7a1c62daf3fe3575014b",
           },
         });
+        expect(workosWithoutEnvAttrs.generatedEnv).toEqual({});
         expect(customAttrs.authConfig.providers).toEqual([
           {
             domain: "https://accounts.example.net",
@@ -173,6 +188,10 @@ describe("Convex.Auth resources", () => {
           instanceId: "i",
           news: {
             providers: [
+              {
+                id: "email",
+                type: "email",
+              },
               {
                 id: "github",
                 type: "oauth",
@@ -215,6 +234,31 @@ describe("Convex.Auth resources", () => {
         expect(JSON.stringify(attrs)).not.toContain("github-secret");
       }),
     ),
+  );
+
+  it.effect("sorts auth manifest metadata deterministically", () =>
+    Effect.gen(function* () {
+      const attrs = yield* buildAuthAttributes({
+        kind: "deterministicAuth",
+        packages: ["zeta", "alpha"],
+        components: [
+          { name: "search", package: "@convex-dev/rag" },
+          { name: "auth", package: "@convex-dev/better-auth" },
+        ],
+        routes: [
+          { path: "/z", kind: "convexAuth" },
+          { path: "/a", kind: "betterAuth" },
+        ],
+      });
+
+      expect(attrs.packages).toEqual(["alpha", "zeta"]);
+      expect(attrs.components.map((component) => component.name)).toEqual([
+        "auth",
+        "search",
+      ]);
+      expect(attrs.routes.map((route) => route.path)).toEqual(["/a", "/z"]);
+      expect(attrs.manifestHash).toMatch(/^sha256:/);
+    }),
   );
 
   it.effect(

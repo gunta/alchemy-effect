@@ -61,6 +61,7 @@ Product-contract docs for the planned Convex integration: concepts, authoring mo
 - [Convex Plain Quickstart](https://v2.alchemy.run/convex/guides/quickstart) — Planned Convex API contract: Use Alchemy with an existing Convex Plain app.
 - [Convex and Cloudflare R2](https://v2.alchemy.run/convex/guides/r2) — Planned Convex API contract: Install the official Convex R2 component around Alchemy-owned Cloudflare buckets.
 - [Convex Runtime Deployer](https://v2.alchemy.run/convex/guides/runtime-experimental) — Planned Convex API contract: Try the experimental runtime deployer that pushes Convex code without the Convex CLI.
+- [Convex Runtime Internals](https://v2.alchemy.run/convex/guides/runtime-internals) — Planned Convex API contract: Understand the experimental Convex runtime deployer, its bundle pipeline, deploy2 protocol model, and Alchemy state contract.
 - [Self-hosted Convex](https://v2.alchemy.run/convex/guides/self-host) — Planned Convex API contract: Use Alchemy with a self-hosted Convex deployment.
 - [Testing Convex Apps](https://v2.alchemy.run/convex/guides/testing) — Planned Convex API contract: Test Alchemy-authored Convex apps with generated layers and component test helpers.
 - [Convex Typed Errors](https://v2.alchemy.run/convex/guides/typed-errors) — Planned Convex API contract: Round-trip schema-typed application errors and classify Convex runtime failures.

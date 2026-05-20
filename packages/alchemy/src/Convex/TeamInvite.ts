@@ -165,6 +165,7 @@ export const TeamInviteProvider = () =>
                 };
           }),
           delete: Effect.fn("Convex.TeamInvite.delete")(function* ({ output }) {
+            if (!output) return;
             yield* api
               .cancelTeamMemberInvite({
                 teamId: output.teamId,

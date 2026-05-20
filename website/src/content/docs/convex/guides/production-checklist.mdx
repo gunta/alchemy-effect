@@ -47,6 +47,14 @@ convex/_alchemy/schema.ts drifted
 Run: alchemy codegen
 ```
 
+For Alchemy Convex Runtime, there are no on-disk generated Convex files
+to check. Run the runtime/Convex-family test sweep instead, because the
+production risk is deploy2 protocol drift and persisted bundle state:
+
+```sh
+bun test packages/convex-dsl/test/*.test.ts packages/convex-runtime/test/*.test.ts packages/convex-files/test/*.test.ts packages/convex-confect/test/*.test.ts packages/alchemy/test/Convex/*.test.ts --coverage --coverage-reporter=lcov --coverage-dir=/tmp/convex-family-coverage
+```
+
 ## 3. Secrets and environment variables
 
 Review deploy-time env like application configuration, not like ad hoc shell
@@ -132,6 +140,17 @@ If the deploy includes `defineMigrations(...)`, review the phase carefully.
 | `backfill` | Decide whether `run: "manual"`, `start`, or `wait` is appropriate |
 | `contract` | Should remain blocked until verify is clean and contract is explicitly allowed |
 
+Also review previous migration state when upgrading an existing
+deployment:
+
+- completed migrations must keep the same source hash,
+- completed migrations removed from the active set must be marked
+  retired,
+- duplicate migration names or generated export names are stop-ship
+  errors,
+- destructive patches need both `destructive: true` and optional-field
+  proof.
+
 Typical follow-up commands:
 
 ```sh
@@ -179,6 +198,9 @@ Ship when all of these are true:
   retry code does not parse strings.
 - Migration phase matches the rollout you actually want.
 - Component version drift, if any, is understood.
+- Runtime deployer state, if using Alchemy Convex Runtime, was validated
+  against the current package schemas and deploy2 tests before the
+  production deploy.
 
 Stop and ask a human when any of these are true:
 

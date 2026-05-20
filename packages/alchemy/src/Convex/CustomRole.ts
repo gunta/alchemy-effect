@@ -157,6 +157,7 @@ export const CustomRoleProvider = () =>
             return toAttrs(updated);
           }),
           delete: Effect.fn("Convex.CustomRole.delete")(function* ({ output }) {
+            if (!output) return;
             yield* api
               .deleteCustomRole({
                 teamId: output.teamId,

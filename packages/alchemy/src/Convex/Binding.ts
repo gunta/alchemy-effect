@@ -20,6 +20,13 @@ const isBindableHost = (value: unknown): value is BindableHost =>
   "bind" in value &&
   typeof value.bind === "function";
 
+const describeHostType = (value: unknown) =>
+  typeof value === "object" && value !== null && "Type" in value
+    ? String((value as { readonly Type: unknown }).Type)
+    : value === null
+      ? "null"
+      : typeof value;
+
 const resolveString = (value: unknown): Effect.Effect<string> =>
   Effect.isEffect(value)
     ? (value as Effect.Effect<string>)
@@ -80,7 +87,7 @@ export const ConvexClientPolicyLive = ConvexClientPolicy.layer.succeed(
     };
     if (!isBindableHost(host)) {
       return yield* Effect.die(
-        `Convex.Client policy requires a bindable host resource, received ${host.Type}.`,
+        `Convex.Client policy requires a bindable host resource, received ${describeHostType(host)}.`,
       );
     }
     const bind = host.bind`Bind(${host}, Convex.Client(${deployment}))`;

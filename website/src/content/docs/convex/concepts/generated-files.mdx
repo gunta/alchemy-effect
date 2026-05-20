@@ -10,7 +10,10 @@ sidebar:
 > declared, a generated `convex/convex.config.ts`. Migration codegen also
 > emits `convex/_alchemy/migrations.ts`,
 > `convex/_alchemy/migrations.manifest.json`, and the stable
-> `convex/migrations.ts` re-export.
+> `convex/migrations.ts` re-export. The files deployer validates source
+> props before filesystem work, tracks generated-file ownership, can
+> prepare files without invoking the CLI on dry runs, and refuses unowned
+> or drifted files unless adoption is explicit.
 
 ## Overview
 
@@ -110,6 +113,32 @@ Check mode should:
 - fail CI when generated files differ from the expected output,
 - make manual edits to `convex/_alchemy/**` visible immediately,
 - keep normal `alchemy codegen` as the explicit repair step.
+
+## Files deployer behavior
+
+`@alchemy/convex-files` is the deployer package for the recommended
+Alchemy Convex mode. Its deploy boundary has two phases:
+
+1. compile the DSL app and synchronize the generated file map to disk,
+2. optionally delegate to the shared `ConvexCli` service for bundle
+   deployment.
+
+The first phase validates `source: { app, outDir, adoptGenerated,
+cleanGenerated, bundle }` before touching the filesystem. It writes a
+manifest that records generated ownership and refuses to overwrite
+unowned files unless `adoptGenerated` is set. When `cleanGenerated` is
+enabled, stale generated files are removed only if the manifest still
+proves ownership.
+
+The second phase is intentionally optional. On dry runs, the deployer
+prepares generated files and computes generated state without invoking
+the Convex CLI. When bundle deployment is requested and a `ConvexCli`
+layer is available, the default CLI source is the generated `convex`
+directory under `outDir`.
+
+This split lets tests and CI validate generated-file state without
+needing Convex credentials, while production deploys can still use the
+normal Convex CLI path.
 
 ## Generated top-level files
 

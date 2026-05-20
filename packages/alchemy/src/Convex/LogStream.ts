@@ -539,6 +539,7 @@ export const LogStreamProvider = () =>
             return toAttrs(news, observed, hashes);
           }),
           delete: Effect.fn("Convex.LogStream.delete")(function* ({ output }) {
+            if (!output) return;
             yield* ignoreNotFound(
               admin.deleteLogStream({
                 deploymentUrl: output.deploymentUrl,

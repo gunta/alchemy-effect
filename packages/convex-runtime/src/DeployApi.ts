@@ -1,4 +1,4 @@
-import * as zlib from "node:zlib";
+import { brotliCompressSync, constants as brotliConstants } from "node:zlib";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -436,10 +436,10 @@ const deploy2Url = (deployment: RuntimeDeploymentReference, path: string) =>
 
 const brotliJson = (value: unknown) =>
   Effect.sync(() =>
-    zlib.brotliCompressSync(JSON.stringify(value), {
+    brotliCompressSync(JSON.stringify(value), {
       params: {
-        [zlib.constants.BROTLI_PARAM_QUALITY]: 4,
-        [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+        [brotliConstants.BROTLI_PARAM_QUALITY]: 4,
+        [brotliConstants.BROTLI_PARAM_MODE]: brotliConstants.BROTLI_MODE_TEXT,
       },
     }),
   );

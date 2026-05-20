@@ -132,6 +132,7 @@ export const PersonalAccessTokenProvider = () =>
           delete: Effect.fn("Convex.PersonalAccessToken.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             yield* api
               .deletePersonalAccessToken({ id: output.name })
               .pipe(Effect.catchTag("Convex.NotFound", () => Effect.void));

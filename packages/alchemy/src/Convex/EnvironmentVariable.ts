@@ -105,6 +105,7 @@ export const EnvironmentVariableProvider = () =>
           delete: Effect.fn("Convex.EnvironmentVariable.delete")(function* ({
             output,
           }) {
+            if (!output) return;
             yield* admin.updateEnvironmentVariables({
               deploymentUrl: output.deploymentUrl,
               changes: [{ name: output.name, value: null }],

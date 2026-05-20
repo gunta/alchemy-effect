@@ -150,6 +150,14 @@ describe("Convex Effect Schema contracts", () => {
         },
       ],
       [
+        Convex.SnapshotImportPropsSchema,
+        { deployment, source: { type: "path", path: "./seed.zip" } },
+      ],
+      [
+        Convex.SnapshotImportPropsSchema,
+        { deployment, source: { type: "export", exportId: "export_123" } },
+      ],
+      [
         Convex.LogStreamPropsSchema,
         {
           deployment,
@@ -226,6 +234,33 @@ describe("Convex Effect Schema contracts", () => {
       ],
       [
         Convex.ComponentPropsSchema,
+        {
+          source: {
+            package: "@convex-dev/rag",
+            local: "./components/rag",
+          },
+        },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        {
+          source: {
+            package: "@convex-dev/rag",
+            configPath: "./components/rag/convex.config.ts",
+          },
+        },
+      ],
+      [
+        Convex.ComponentPropsSchema,
+        {
+          source: {
+            local: "./components/rag",
+            configExport: "@convex-dev/rag/convex.config.js",
+          },
+        },
+      ],
+      [
+        Convex.ComponentPropsSchema,
         { source: { package: "@convex-dev/rag" }, name: "   " },
       ],
       [
@@ -241,8 +276,41 @@ describe("Convex Effect Schema contracts", () => {
         { source: { package: "@convex-dev/rag" }, test: "" },
       ],
       [
+        Convex.BundlePropsSchema,
+        { deployment: "calm-cat-123", source: "./convex" },
+      ],
+      [
+        Convex.AppPropsSchema,
+        {
+          deployment: "calm-cat-123",
+          source: {},
+          deployer: {
+            _tag: "FilesDeployer",
+            deploy: () => Effect.die("schema-only"),
+          },
+        },
+      ],
+      [
         Convex.CanonicalUrlPropsSchema,
         { deployment, requestDestination: "api", url: null },
+      ],
+      [
+        Convex.DeployKeyPropsSchema,
+        { deployment: { deploymentName: " " }, name: "ci" },
+      ],
+      [
+        Convex.DeploymentStatePropsSchema,
+        { deployment: "not a url", state: "paused" },
+      ],
+      [
+        Convex.EnvironmentVariablePropsSchema,
+        {
+          deployment: {
+            deploymentUrl: "https://calm-cat-123.convex.cloud/path",
+          },
+          name: "OPENAI_API_KEY",
+          value: "secret",
+        },
       ],
       [
         Convex.TeamInvitePropsSchema,
@@ -266,6 +334,40 @@ describe("Convex Effect Schema contracts", () => {
       [
         Convex.SnapshotImportPropsSchema,
         { deployment, source: { type: "file", path: "seed.zip" } },
+      ],
+      [
+        Convex.SnapshotImportPropsSchema,
+        { deployment, source: { type: "url", url: "" } },
+      ],
+      [
+        Convex.SnapshotImportPropsSchema,
+        {
+          deployment,
+          source: {
+            type: "url",
+            url: "https://example.com/db.zip",
+            path: "./seed.zip",
+          },
+        },
+      ],
+      [
+        Convex.SnapshotImportPropsSchema,
+        { deployment, source: { type: "path", path: "" } },
+      ],
+      [
+        Convex.SnapshotImportPropsSchema,
+        {
+          deployment,
+          source: {
+            type: "export",
+            exportId: "export_123",
+            url: "https://example.com/db.zip",
+          },
+        },
+      ],
+      [
+        Convex.SnapshotImportPropsSchema,
+        { deployment, source: { type: "export", exportId: "" } },
       ],
       [
         Convex.LogStreamPropsSchema,
@@ -294,4 +396,60 @@ describe("Convex Effect Schema contracts", () => {
       expect(() => Schema.decodeUnknownSync(schema)(value)).toThrow();
     }
   });
+
+  it.effect(
+    "wraps provider hooks with prop decoding and clear deployment-reference errors",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<readonly [string, unknown]> = [];
+        const provider = Convex.withPropsSchema(
+          Schema.Struct({
+            name: Schema.String,
+            note: Schema.optionalKey(Schema.String),
+          }),
+          {
+            precreate: Effect.fn("test.precreate")(function* ({ news }) {
+              calls.push(["precreate", news]);
+              return { created: true };
+            }),
+            reconcile: Effect.fn("test.reconcile")(function* ({ news }) {
+              calls.push(["reconcile", news]);
+              return { reconciled: true };
+            }),
+          },
+        );
+
+        expect(
+          yield* provider.precreate({
+            news: { name: "search", note: undefined },
+          }),
+        ).toEqual({ created: true });
+        expect(
+          yield* provider.reconcile({
+            news: { name: "search", note: "ready" },
+          }),
+        ).toEqual({ reconciled: true });
+        expect(calls).toEqual([
+          ["precreate", { name: "search" }],
+          ["reconcile", { name: "search", note: "ready" }],
+        ]);
+        expect(() =>
+          Schema.decodeUnknownSync(Convex.DeploymentOriginUrlSchema)(
+            " https://calm-cat-123.convex.cloud",
+          ),
+        ).toThrow();
+
+        const invalidReference = yield* Convex.decodeDeploymentIdentity(
+          "Convex.Bundle",
+          {
+            deploymentName: "calm-cat-123",
+            deploymentUrl: "https://calm-cat-123.convex.cloud/path",
+          },
+        ).pipe(Effect.flip);
+
+        expect(invalidReference.message).toContain("Convex.Bundle deployment");
+        expect(invalidReference.message).toContain("deploymentName");
+        expect(invalidReference.message).toContain("deploymentUrl");
+      }),
+  );
 });
